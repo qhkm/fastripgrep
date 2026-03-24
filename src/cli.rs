@@ -7,6 +7,37 @@ use crate::index;
 use crate::search::{self, SearchOptions};
 use crate::output;
 
+/// Load config file args from `~/.rsgreprc` or `$RSGREP_CONFIG_PATH`.
+/// Each line is one argument (like ripgrep's config format).
+/// Lines starting with `#` are comments. Empty lines are ignored.
+fn load_config_args() -> Vec<String> {
+    let config_path = std::env::var("RSGREP_CONFIG_PATH")
+        .map(PathBuf::from)
+        .ok()
+        .or_else(|| {
+            dirs_next().map(|home| home.join(".rsgreprc"))
+        });
+
+    let path = match config_path {
+        Some(p) if p.exists() => p,
+        _ => return Vec::new(),
+    };
+
+    match std::fs::read_to_string(&path) {
+        Ok(content) => content
+            .lines()
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .map(|l| l.to_string())
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn dirs_next() -> Option<PathBuf> {
+    std::env::var("HOME").ok().map(PathBuf::from)
+}
+
 #[derive(Parser)]
 #[command(name = "rsgrep", version, about = "Fast regex search with sparse n-gram indexing")]
 struct Cli {
@@ -36,6 +67,9 @@ enum Commands {
         literal: bool,
         #[arg(short = 'i')]
         case_insensitive: bool,
+        /// Smart case: case-insensitive if pattern is all lowercase
+        #[arg(short = 'S', long)]
+        smart_case: bool,
         #[arg(short = 'l')]
         files_only: bool,
         #[arg(short = 'c', long)]
@@ -66,7 +100,12 @@ enum Commands {
 }
 
 pub fn run() -> Result<()> {
-    let cli = Cli::parse();
+    // Merge config file args with CLI args
+    let config_args = load_config_args();
+    let all_args = std::iter::once(std::env::args().next().unwrap_or_default())
+        .chain(config_args)
+        .chain(std::env::args().skip(1));
+    let cli = Cli::parse_from(all_args);
 
     let result = match cli.command {
         Commands::Index { path, max_filesize, force: _ } => {
@@ -84,6 +123,7 @@ pub fn run() -> Result<()> {
             no_index,
             literal,
             case_insensitive,
+            smart_case,
             files_only,
             count,
             max_count,
@@ -94,8 +134,12 @@ pub fn run() -> Result<()> {
             file_type,
         } => {
             let root = std::fs::canonicalize(&path)?;
+
+            // Smart case: if pattern is all lowercase and -i is not set, enable case-insensitive
+            let effective_ci = case_insensitive || (smart_case && !pattern.chars().any(|c| c.is_uppercase()));
+
             let opts = SearchOptions {
-                case_insensitive,
+                case_insensitive: effective_ci,
                 files_only,
                 count,
                 max_count,
