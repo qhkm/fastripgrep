@@ -214,21 +214,19 @@ Match counts are identical to ripgrep (case-sensitive mode) across all tested pa
 
 frg ships with skill files and a `CLAUDE.md` that coding agents can pick up automatically.
 
-### Claude Code
+### Claude Code (Plugin)
 
-Copy the `CLAUDE.md` into your project root — Claude Code reads it automatically:
+Install as a Claude Code plugin — adds `/frg-search` and `/frg-replace` skills:
+
+```
+/plugin marketplace add qhkm/fastripgrep
+/plugin install frg@frg-marketplace
+```
+
+Or manually copy `CLAUDE.md` into your project root for automatic pickup:
 
 ```bash
 cp /path/to/fastripgrep/CLAUDE.md .claude/CLAUDE.md
-# or just add frg instructions to your existing CLAUDE.md
-```
-
-Or add to your global `~/.claude/CLAUDE.md`:
-
-```markdown
-## Search Strategy
-For codebase searches, use `frg search` instead of grep/rg when a `.frg/` index exists.
-Run `frg index .` first if `.frg/` doesn't exist.
 ```
 
 ### Cursor / Windsurf / Other Agents
@@ -255,18 +253,22 @@ You have access to `frg` (fastripgrep), a fast indexed grep.
 
 ### Skills
 
-A single drop-in skill file (`skills/frg.md`) teaches any agent to use frg for search, replace, and index management.
+The plugin provides two skills: `/frg-search` and `/frg-replace`.
 
-**Claude Code:**
+**Manual install (without plugin system):**
 ```bash
-# Copy to your project's skills directory
-mkdir -p .claude/skills && cp skills/frg.md .claude/skills/
+# Copy skill files to your project
+mkdir -p .claude/skills
+cp -r /path/to/fastripgrep/skills/frg-search .claude/skills/
+cp -r /path/to/fastripgrep/skills/frg-replace .claude/skills/
 
-# Or install globally for all projects
-mkdir -p ~/.claude/skills && cp skills/frg.md ~/.claude/skills/
+# Or install globally
+mkdir -p ~/.claude/skills
+cp -r /path/to/fastripgrep/skills/frg-search ~/.claude/skills/
+cp -r /path/to/fastripgrep/skills/frg-replace ~/.claude/skills/
 ```
 
-**Other agents:** Copy `skills/frg.md` into wherever your agent reads skill/tool definitions.
+**Other agents:** Copy `skills/frg-search/SKILL.md` and `skills/frg-replace/SKILL.md` into wherever your agent reads skill/tool definitions.
 
 ## Exit Codes
 

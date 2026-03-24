@@ -1,0 +1,13 @@
+{
+  "name": "frg",
+  "description": "Fast indexed code search — 5x faster than ripgrep using sparse n-gram indexing",
+  "version": "0.2.0",
+  "author": {
+    "name": "Aisar Labs",
+    "email": "qaiyyum@aisar.ai"
+  },
+  "homepage": "https://github.com/qhkm/fastripgrep",
+  "repository": "https://github.com/qhkm/fastripgrep",
+  "license": "MIT",
+  "keywords": ["grep", "search", "regex", "ripgrep", "index", "ngram"]
+}

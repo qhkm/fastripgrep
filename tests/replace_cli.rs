@@ -82,3 +82,70 @@ fn test_replace_write_supports_multiline_patterns_with_index_present() {
     );
     assert_eq!(fs::read_to_string(&path).unwrap(), "qux\nbaz\n");
 }
+
+#[test]
+fn test_replace_write_supports_literal_mode() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("a.txt");
+    fs::write(&path, "obj.value = obj.value + 1\n").unwrap();
+
+    let output = run_frg([
+        "replace",
+        "-F",
+        "obj.value",
+        "new.value",
+        dir.path().to_str().unwrap(),
+        "--write",
+    ]);
+    let (stdout, stderr) = output_text(&output);
+
+    assert!(
+        output.status.success(),
+        "literal replace should succeed\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert!(stdout.contains("a.txt: 2 replacements"), "stdout:\n{}", stdout);
+    assert!(
+        stderr.contains("Wrote 2 replacements in 1 files."),
+        "stderr:\n{}",
+        stderr
+    );
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "new.value = new.value + 1\n"
+    );
+}
+
+#[test]
+fn test_replace_write_supports_capture_groups() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("a.txt");
+    fs::write(&path, "fn hello() {}\nfn world() {}\n").unwrap();
+
+    let output = run_frg([
+        "replace",
+        r"fn (\w+)\(\)",
+        "fn renamed_$1()",
+        dir.path().to_str().unwrap(),
+        "--write",
+    ]);
+    let (stdout, stderr) = output_text(&output);
+
+    assert!(
+        output.status.success(),
+        "capture-group replace should succeed\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert!(stdout.contains("a.txt: 2 replacements"), "stdout:\n{}", stdout);
+    assert!(
+        stderr.contains("Wrote 2 replacements in 1 files."),
+        "stderr:\n{}",
+        stderr
+    );
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "fn renamed_hello() {}\nfn renamed_world() {}\n"
+    );
+}

@@ -1,18 +1,16 @@
-# frg — Fast indexed code search & replace
+---
+description: Fast indexed code search using frg (5x faster than ripgrep)
+---
 
-Use `frg` (fastripgrep) instead of grep/ripgrep. 5x faster via sparse n-gram indexing.
+Use `frg` for code search. It indexes your codebase with sparse n-grams and searches in ~10ms instead of scanning every file.
 
 ## Setup
 
-```bash
-# Install
-cargo install fastripgrep
+If frg is not installed: `cargo install fastripgrep`
 
-# For agent mode: auto-index, JSON output, no noise
-export FRG_AGENT=1
-```
+For agent mode (auto-index, JSON output, no noise): `export FRG_AGENT=1`
 
-## Search
+## Commands
 
 ```bash
 frg "pattern"                    # search current directory
@@ -27,20 +25,17 @@ frg "pattern" . --type ts        # filter by file type
 frg "pattern" . --json           # JSON output
 ```
 
-## Replace
-
-```bash
-frg replace "old" "new" .           # preview (dry-run)
-frg replace "old" "new" . --write   # apply changes
-frg replace -i "old" "new" .        # case-insensitive
-frg replace "fn (\w+)" "fn ${1}_v2" . # capture groups
-```
-
 ## Index Management
 
 ```bash
-frg index .      # build index (one-time)
+frg index .      # build index (one-time, ~20s)
 frg update .     # incremental update (~70ms)
 frg status .     # check index stats
 frg watch .      # auto-update on file changes
 ```
+
+## When to Use
+
+- Use frg for all codebase searches when a `.frg/` index exists
+- Use grep/rg for one-off searches on unfamiliar codebases
+- frg auto-indexes in agent mode (FRG_AGENT=1)
