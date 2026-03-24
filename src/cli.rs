@@ -368,43 +368,38 @@ pub fn run() -> Result<()> {
                 .watch(&root, RecursiveMode::Recursive)
                 .map_err(|e| anyhow::anyhow!("failed to watch directory: {}", e))?;
 
-            loop {
-                match rx.recv() {
-                    Ok(()) => {
-                        // Debounce: drain any queued events for 500ms
-                        let deadline =
-                            std::time::Instant::now() + Duration::from_millis(500);
-                        while let Ok(()) = rx.recv_timeout(
-                            deadline.saturating_duration_since(std::time::Instant::now()),
-                        ) {
-                            // drain
-                        }
+            while rx.recv().is_ok() {
+                // Debounce: drain any queued events for 500ms
+                let deadline =
+                    std::time::Instant::now() + Duration::from_millis(500);
+                while let Ok(()) = rx.recv_timeout(
+                    deadline.saturating_duration_since(std::time::Instant::now()),
+                ) {
+                    // drain
+                }
 
-                        eprint!("Change detected, updating... ");
-                        match index::update_index(&root, 10 * 1024 * 1024) {
-                            Ok(()) => {
-                                if let Ok(gen) = index::current_generation(&root) {
-                                    if let Ok(meta) = index::meta::IndexMeta::read(
-                                        &gen.join("meta.json"),
-                                    ) {
-                                        if meta.overlay_file_count > 0
-                                            || meta.tombstone_count > 0
-                                        {
-                                            eprintln!(
-                                                "{} overlay, {} tombstoned.",
-                                                meta.overlay_file_count,
-                                                meta.tombstone_count
-                                            );
-                                        } else {
-                                            eprintln!("no changes.");
-                                        }
-                                    }
+                eprint!("Change detected, updating... ");
+                match index::update_index(&root, 10 * 1024 * 1024) {
+                    Ok(()) => {
+                        if let Ok(gen) = index::current_generation(&root) {
+                            if let Ok(meta) = index::meta::IndexMeta::read(
+                                &gen.join("meta.json"),
+                            ) {
+                                if meta.overlay_file_count > 0
+                                    || meta.tombstone_count > 0
+                                {
+                                    eprintln!(
+                                        "{} overlay, {} tombstoned.",
+                                        meta.overlay_file_count,
+                                        meta.tombstone_count
+                                    );
+                                } else {
+                                    eprintln!("no changes.");
                                 }
                             }
-                            Err(e) => eprintln!("error: {}", e),
                         }
                     }
-                    Err(_) => break, // channel closed
+                    Err(e) => eprintln!("error: {}", e),
                 }
             }
             Ok(())
