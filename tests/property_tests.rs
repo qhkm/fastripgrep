@@ -72,8 +72,8 @@ proptest! {
         // Brute-force: find minimum number of intervals from `all` that cover all pairs
         let min_cover = brute_force_min_cover(&all, num_pairs);
 
-        prop_assert!(covering.len() <= min_cover + 1,
-            "greedy {} vs optimal {} (tolerance 1)", covering.len(), min_cover);
+        prop_assert!(covering.len() == min_cover,
+            "greedy {} vs optimal {} (must be exact)", covering.len(), min_cover);
     }
 }
 

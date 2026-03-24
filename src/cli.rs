@@ -53,7 +53,7 @@ enum Commands {
         #[arg(long = "type")]
         file_type: Option<String>,
     },
-    /// Incrementally update the index
+    /// Rebuild the index (full rebuild; incremental updates planned for v0.2)
     Update {
         #[arg(default_value = ".")]
         path: PathBuf,
@@ -152,10 +152,9 @@ pub fn run() -> Result<()> {
         }
         Commands::Update { path } => {
             let root = std::fs::canonicalize(&path)?;
-            eprintln!("Updating index...");
-            // v0.1: update = full rebuild. Overlay support is a future enhancement.
+            eprintln!("Rebuilding index...");
             index::build_index(&root, 10 * 1024 * 1024)?;
-            eprintln!("Done.");
+            eprintln!("Done (full rebuild; incremental updates planned for v0.2).");
             Ok(())
         }
         Commands::Status { path } => {
