@@ -1,8 +1,23 @@
-# frg (fastripgrep)
+<div align="center">
 
-Fast regex search with sparse n-gram indexing. Inspired by [Cursor's fast regex search](https://cursor.com/blog/fast-regex-search).
+# frg
 
-Instead of scanning every file like `grep` or `ripgrep`, frg pre-builds an index of sparse n-grams and uses it to narrow candidates before running the regex — achieving sub-50ms searches on large codebases.
+**Faster than ripgrep. Every pattern. Every time.**
+
+[![Crates.io](https://img.shields.io/crates/v/fastripgrep)](https://crates.io/crates/fastripgrep)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-101%20passing-brightgreen)]()
+
+</div>
+
+---
+
+**frg** (fastripgrep) builds a sparse n-gram index of your codebase, then searches in **10ms** instead of scanning every file. Inspired by [Cursor's fast regex search](https://cursor.com/blog/fast-regex-search).
+
+```
+$ frg index .                     # one-time: ~20s for 9K files
+$ frg "renderUsage"               # 10ms (ripgrep: 53ms)
+```
 
 ## Benchmarks
 
