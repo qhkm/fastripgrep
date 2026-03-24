@@ -66,3 +66,92 @@ jobs:
         run: cargo publish
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  update-homebrew:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get version from tag
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
+
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for target in aarch64-apple-darwin x86_64-apple-darwin aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu; do
+            gh release download "v${{ env.VERSION }}" \
+              --repo qhkm/fastripgrep \
+              --pattern "frg-v${{ env.VERSION }}-${target}.tar.gz"
+          done
+
+      - name: Compute checksums
+        run: |
+          echo "SHA_AARCH64_DARWIN=$(sha256sum frg-v${{ env.VERSION }}-aarch64-apple-darwin.tar.gz | cut -d' ' -f1)" >> $GITHUB_ENV
+          echo "SHA_X86_64_DARWIN=$(sha256sum frg-v${{ env.VERSION }}-x86_64-apple-darwin.tar.gz | cut -d' ' -f1)" >> $GITHUB_ENV
+          echo "SHA_AARCH64_LINUX=$(sha256sum frg-v${{ env.VERSION }}-aarch64-unknown-linux-gnu.tar.gz | cut -d' ' -f1)" >> $GITHUB_ENV
+          echo "SHA_X86_64_LINUX=$(sha256sum frg-v${{ env.VERSION }}-x86_64-unknown-linux-gnu.tar.gz | cut -d' ' -f1)" >> $GITHUB_ENV
+
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v4
+        with:
+          repository: qhkm/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update formula
+        run: |
+          cat > homebrew-tap/Formula/frg.rb << 'FORMULA'
+          class Frg < Formula
+            desc "Fast regex search with sparse n-gram indexing — faster than ripgrep"
+            homepage "https://github.com/qhkm/fastripgrep"
+            version "VERSION_PLACEHOLDER"
+            license "MIT"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/qhkm/fastripgrep/releases/download/v#{version}/frg-v#{version}-aarch64-apple-darwin.tar.gz"
+                sha256 "SHA_AARCH64_DARWIN_PLACEHOLDER"
+              else
+                url "https://github.com/qhkm/fastripgrep/releases/download/v#{version}/frg-v#{version}-x86_64-apple-darwin.tar.gz"
+                sha256 "SHA_X86_64_DARWIN_PLACEHOLDER"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.arm?
+                url "https://github.com/qhkm/fastripgrep/releases/download/v#{version}/frg-v#{version}-aarch64-unknown-linux-gnu.tar.gz"
+                sha256 "SHA_AARCH64_LINUX_PLACEHOLDER"
+              else
+                url "https://github.com/qhkm/fastripgrep/releases/download/v#{version}/frg-v#{version}-x86_64-unknown-linux-gnu.tar.gz"
+                sha256 "SHA_X86_64_LINUX_PLACEHOLDER"
+              end
+            end
+
+            def install
+              bin.install "frg"
+            end
+
+            test do
+              assert_match "frg", shell_output("#{bin}/frg --version")
+            end
+          end
+          FORMULA
+
+          # Replace placeholders with actual values
+          sed -i "s/VERSION_PLACEHOLDER/${{ env.VERSION }}/g" homebrew-tap/Formula/frg.rb
+          sed -i "s/SHA_AARCH64_DARWIN_PLACEHOLDER/${{ env.SHA_AARCH64_DARWIN }}/g" homebrew-tap/Formula/frg.rb
+          sed -i "s/SHA_X86_64_DARWIN_PLACEHOLDER/${{ env.SHA_X86_64_DARWIN }}/g" homebrew-tap/Formula/frg.rb
+          sed -i "s/SHA_AARCH64_LINUX_PLACEHOLDER/${{ env.SHA_AARCH64_LINUX }}/g" homebrew-tap/Formula/frg.rb
+          sed -i "s/SHA_X86_64_LINUX_PLACEHOLDER/${{ env.SHA_X86_64_LINUX }}/g" homebrew-tap/Formula/frg.rb
+
+          # Fix indentation (heredoc adds extra spaces)
+          sed -i 's/^          //' homebrew-tap/Formula/frg.rb
+
+      - name: Push to tap
+        run: |
+          cd homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/frg.rb
+          git commit -m "Update frg to ${{ env.VERSION }}"
+          git push
