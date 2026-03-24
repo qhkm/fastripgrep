@@ -251,7 +251,7 @@ cargo clippy        # Zero warnings
 
 **Adoption:**
 - [x] ~~`frg watch`~~ — auto-updates index on file changes with debouncing
-- [x] ~~Homebrew formula~~ — `brew tap qhkm/tap && brew install frg`
+- [ ] Homebrew tap — formula exists in `Formula/`, needs tap repo + release automation with checksums
 
 **Editor integrations:**
 - [ ] VS Code extension — use frg as search backend

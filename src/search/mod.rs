@@ -170,6 +170,11 @@ pub fn brute_force_search(
     Ok(all)
 }
 
+/// Check if a path passes glob and file type filters. Public for use by replace.
+pub fn matches_filters_pub(path: &Path, opts: &SearchOptions) -> bool {
+    matches_filters(path, opts)
+}
+
 fn matches_filters(path: &Path, opts: &SearchOptions) -> bool {
     if let Some(ref glob_pat) = opts.glob_pattern {
         if let Ok(pat) = glob::Pattern::new(glob_pat) {

@@ -155,6 +155,9 @@ enum Commands {
         /// Filter by file type
         #[arg(long = "type")]
         file_type: Option<String>,
+        /// Follow symbolic links
+        #[arg(long)]
+        follow: bool,
     },
 }
 
@@ -519,6 +522,7 @@ pub fn run() -> Result<()> {
             literal,
             glob,
             file_type,
+            follow,
         } => {
             let root = std::fs::canonicalize(&path)?;
 
@@ -540,20 +544,16 @@ pub fn run() -> Result<()> {
 
             let re = regex::bytes::Regex::new(&effective_pattern)?;
 
-            // Find files with matches using existing search
-            let opts = SearchOptions {
-                case_insensitive,
-                literal,
+            // Walk files directly — don't use search pipeline.
+            // This handles unindexed trees and multiline patterns correctly
+            // because replace_in_file operates on whole file content.
+            let files = crate::ignore::walk_files(&root, 10 * 1024 * 1024, follow)?;
+
+            let filter_opts = SearchOptions {
                 glob_pattern: glob,
                 file_type,
                 ..Default::default()
             };
-            let matches = search::search(&root, &pattern, &opts)?;
-
-            // Get unique file paths from matches
-            let mut file_paths: Vec<String> = matches.iter().map(|m| m.file_path.clone()).collect();
-            file_paths.sort();
-            file_paths.dedup();
 
             let stdout = std::io::stdout();
             let mut out = std::io::BufWriter::new(stdout.lock());
@@ -562,64 +562,62 @@ pub fn run() -> Result<()> {
             let mut total_replacements = 0;
             let mut total_files = 0;
 
-            if write {
-                // Write mode
-                for file_path in &file_paths {
-                    let p = std::path::Path::new(file_path);
-                    match search::replace::write_replacement(p, &re, &replacement_bytes) {
+            for file_path in &files {
+                if !search::matches_filters_pub(file_path, &filter_opts) {
+                    continue;
+                }
+
+                if write {
+                    match search::replace::write_replacement(file_path, &re, &replacement_bytes) {
                         Ok(0) => {}
                         Ok(n) => {
                             total_replacements += n;
                             total_files += 1;
-                            let _ = writeln!(out, "{}: {} replacements", file_path, n);
+                            let _ = writeln!(out, "{}: {} replacements", file_path.display(), n);
                         }
-                        Err(e) => eprintln!("error: {}: {}", file_path, e),
+                        Err(e) => eprintln!("error: {}: {}", file_path.display(), e),
+                    }
+                } else if let Some(result) =
+                    search::replace::replace_in_file(file_path, &re, &replacement_bytes)
+                {
+                    total_replacements += result.replacements;
+                    total_files += 1;
+                    if use_color {
+                        let _ = writeln!(out, "\x1b[36m{}\x1b[0m:", result.file_path);
+                    } else {
+                        let _ = writeln!(out, "{}:", result.file_path);
+                    }
+                    for ((ln, orig), (_, repl)) in
+                        result.original_lines.iter().zip(result.replaced_lines.iter())
+                    {
+                        if use_color {
+                            let _ = writeln!(
+                                out,
+                                "  \x1b[32m{:>4}\x1b[0m | \x1b[31m- {}\x1b[0m",
+                                ln, orig
+                            );
+                            let _ = writeln!(out, "       | \x1b[32m+ {}\x1b[0m", repl);
+                        } else {
+                            let _ = writeln!(out, "  {:>4} | - {}", ln, orig);
+                            let _ = writeln!(out, "       | + {}", repl);
+                        }
                     }
                 }
+            }
+
+            if write {
                 eprintln!(
                     "Wrote {} replacements in {} files.",
                     total_replacements, total_files
                 );
+            } else if total_files > 0 {
+                eprintln!(
+                    "Preview: {} lines changed in {} files. Use --write to apply.",
+                    total_replacements, total_files
+                );
             } else {
-                // Preview mode (dry-run)
-                for file_path in &file_paths {
-                    let p = std::path::Path::new(file_path);
-                    if let Some(result) =
-                        search::replace::replace_in_file(p, &re, &replacement_bytes)
-                    {
-                        total_replacements += result.replacements;
-                        total_files += 1;
-                        if use_color {
-                            let _ = writeln!(out, "\x1b[36m{}\x1b[0m:", result.file_path);
-                        } else {
-                            let _ = writeln!(out, "{}:", result.file_path);
-                        }
-                        for ((ln, orig), (_, repl)) in
-                            result.original_lines.iter().zip(result.replaced_lines.iter())
-                        {
-                            if use_color {
-                                let _ = writeln!(
-                                    out,
-                                    "  \x1b[32m{:>4}\x1b[0m | \x1b[31m- {}\x1b[0m",
-                                    ln, orig
-                                );
-                                let _ = writeln!(out, "       | \x1b[32m+ {}\x1b[0m", repl);
-                            } else {
-                                let _ = writeln!(out, "  {:>4} | - {}", ln, orig);
-                                let _ = writeln!(out, "       | + {}", repl);
-                            }
-                        }
-                    }
-                }
-                if total_files > 0 {
-                    eprintln!(
-                        "Preview: {} lines changed in {} files. Use --write to apply.",
-                        total_replacements, total_files
-                    );
-                } else {
-                    eprintln!("No matches found.");
-                    process::exit(1);
-                }
+                eprintln!("No matches found.");
+                process::exit(1);
             }
             Ok(())
         }
