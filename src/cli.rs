@@ -1,5 +1,5 @@
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use std::path::PathBuf;
 use std::process;
 
@@ -101,6 +101,12 @@ enum Commands {
     },
     /// Upgrade frg to the latest release from GitHub
     Upgrade,
+    /// Generate shell completions
+    Completions {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
 }
 
 pub fn run() -> Result<()> {
@@ -265,6 +271,11 @@ pub fn run() -> Result<()> {
             index::index_status(&root)
         }
         Commands::Upgrade => self_upgrade(),
+        Commands::Completions { shell } => {
+            let mut cmd = Cli::command();
+            clap_complete::generate(shell, &mut cmd, "frg", &mut std::io::stdout());
+            Ok(())
+        }
     };
 
     if let Err(e) = result {
