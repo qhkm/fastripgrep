@@ -262,7 +262,7 @@ cargo clippy        # Zero warnings
 - [ ] Monotone-stack n-gram extraction — remove the 64-byte cap while staying O(n)
 
 **Features:**
-- [ ] `--replace` / `frg replace` — search and replace with preview
+- [x] ~~`frg replace`~~ — search and replace with diff preview (dry-run default, `--write` to apply)
 
 ## License
 
