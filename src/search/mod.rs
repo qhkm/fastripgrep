@@ -5,10 +5,10 @@ pub mod verify;
 use crate::index::filetable::FileTableReader;
 use crate::index::lookup::MmapLookupTable;
 use crate::index::postings::decode_posting_list;
-use crate::index::{current_generation, meta::IndexMeta};
+use crate::index::{current_generation, is_tombstoned, read_tombstones, meta::IndexMeta};
 use anyhow::Result;
 use decompose::{build_query_plan, QueryPlan};
-use intersect::{intersect_many, union_many};
+use intersect::{intersect_many, sorted_union, union_many};
 use std::io::Write;
 use std::path::Path;
 use verify::{verify_file, Match};
@@ -26,6 +26,49 @@ pub struct SearchOptions {
     pub glob_pattern: Option<String>,
     pub file_type: Option<String>,
     pub json: bool,
+}
+
+/// Resolve a file ID to a path, considering both base and overlay file tables.
+fn resolve_file_path(
+    fid: u32,
+    base_file_count: u32,
+    base_ft: &FileTableReader,
+    overlay_ft: Option<&FileTableReader>,
+    root: &Path,
+) -> Option<std::path::PathBuf> {
+    if fid < base_file_count {
+        base_ft.get(fid).map(|e| root.join(&e.path))
+    } else {
+        overlay_ft.and_then(|oft| {
+            let overlay_id = fid - base_file_count;
+            oft.get(overlay_id).map(|e| root.join(&e.path))
+        })
+    }
+}
+
+/// Load overlay data if it exists in the generation directory.
+struct OverlayData {
+    lookup: MmapLookupTable,
+    postings: Vec<u8>,
+    file_table: FileTableReader,
+    tombstones: Vec<u32>,
+}
+
+fn load_overlay(gen_dir: &Path) -> Result<Option<OverlayData>> {
+    let overlay_dir = gen_dir.join("overlay");
+    if !overlay_dir.exists() {
+        return Ok(None);
+    }
+    let lookup = MmapLookupTable::open(&overlay_dir.join("lookup.bin"))?;
+    let postings = std::fs::read(overlay_dir.join("postings.bin"))?;
+    let file_table = FileTableReader::open(&overlay_dir.join("files.bin"))?;
+    let tombstones = read_tombstones(&overlay_dir.join("tombstones.bin"))?;
+    Ok(Some(OverlayData {
+        lookup,
+        postings,
+        file_table,
+        tombstones,
+    }))
 }
 
 pub fn search(root: &Path, pattern: &str, opts: &SearchOptions) -> Result<Vec<Match>> {
@@ -59,16 +102,37 @@ pub fn search(root: &Path, pattern: &str, opts: &SearchOptions) -> Result<Vec<Ma
     let lookup = MmapLookupTable::open(&gen_dir.join("lookup.bin"))?;
     let postings_data = std::fs::read(gen_dir.join("postings.bin"))?;
     let file_table = FileTableReader::open(&gen_dir.join("files.bin"))?;
+    let base_file_count = file_table.len() as u32;
+
+    // Load overlay if it exists
+    let overlay = load_overlay(&gen_dir)?;
 
     let plan = build_query_plan(&effective);
-    let candidates = execute_plan(&plan, &lookup, &postings_data, &file_table)?;
+
+    // Execute plan on base index
+    let mut candidates = execute_plan(&plan, &lookup, &postings_data, &file_table)?;
+
+    // If overlay exists, also query overlay and merge results
+    if let Some(ref ov) = overlay {
+        let overlay_candidates =
+            execute_plan_overlay(&plan, &ov.lookup, &ov.postings, &ov.file_table, base_file_count)?;
+        candidates = sorted_union(&candidates, &overlay_candidates);
+
+        // Remove tombstoned file IDs
+        candidates.retain(|fid| !is_tombstoned(&ov.tombstones, *fid));
+    }
 
     // Collect candidate paths, filtering first
     let candidate_paths: Vec<_> = candidates
         .iter()
         .filter_map(|fid| {
-            let entry = file_table.get(*fid)?;
-            let full_path = root.join(&entry.path);
+            let full_path = resolve_file_path(
+                *fid,
+                base_file_count,
+                &file_table,
+                overlay.as_ref().map(|o| &o.file_table),
+                root,
+            )?;
             if matches_filters(&full_path, opts) {
                 Some(full_path)
             } else {
@@ -179,14 +243,29 @@ pub fn search_streaming<W: Write>(
         let lookup = MmapLookupTable::open(&gen_dir.join("lookup.bin"))?;
         let postings_data = std::fs::read(gen_dir.join("postings.bin"))?;
         let file_table = FileTableReader::open(&gen_dir.join("files.bin"))?;
+        let base_file_count = file_table.len() as u32;
+
+        let overlay = load_overlay(&gen_dir)?;
 
         let plan = build_query_plan(&effective);
-        let candidates = execute_plan(&plan, &lookup, &postings_data, &file_table)?;
+        let mut candidates = execute_plan(&plan, &lookup, &postings_data, &file_table)?;
+
+        if let Some(ref ov) = overlay {
+            let overlay_candidates =
+                execute_plan_overlay(&plan, &ov.lookup, &ov.postings, &ov.file_table, base_file_count)?;
+            candidates = sorted_union(&candidates, &overlay_candidates);
+            candidates.retain(|fid| !is_tombstoned(&ov.tombstones, *fid));
+        }
 
         candidates.iter()
             .filter_map(|fid| {
-                let entry = file_table.get(*fid)?;
-                Some(root.join(&entry.path))
+                resolve_file_path(
+                    *fid,
+                    base_file_count,
+                    &file_table,
+                    overlay.as_ref().map(|o| &o.file_table),
+                    root,
+                )
             })
             .collect()
     };
@@ -311,6 +390,52 @@ fn execute_plan(
             Ok(union_many(&lists?))
         }
         QueryPlan::ScanAll => Ok(ft.all_file_ids()),
+    }
+}
+
+/// Execute a query plan against the overlay index.
+/// Overlay file IDs are stored as local IDs (0-based) in the postings,
+/// so we add base_file_count to translate them to global IDs.
+fn execute_plan_overlay(
+    plan: &QueryPlan,
+    lookup: &MmapLookupTable,
+    postings: &[u8],
+    ft: &FileTableReader,
+    base_file_count: u32,
+) -> Result<Vec<u32>> {
+    match plan {
+        QueryPlan::Lookup(hash) => {
+            if let Some((offset, length)) = lookup.lookup(*hash) {
+                let s = offset as usize;
+                let e = s + length as usize;
+                if e <= postings.len() {
+                    // Overlay postings already store global IDs (base_file_count + local_id)
+                    Ok(decode_posting_list(&postings[s..e]))
+                } else {
+                    Ok(Vec::new())
+                }
+            } else {
+                Ok(Vec::new())
+            }
+        }
+        QueryPlan::And(subs) => {
+            let lists: Result<Vec<_>> = subs
+                .iter()
+                .map(|s| execute_plan_overlay(s, lookup, postings, ft, base_file_count))
+                .collect();
+            Ok(intersect_many(&lists?))
+        }
+        QueryPlan::Or(subs) => {
+            let lists: Result<Vec<_>> = subs
+                .iter()
+                .map(|s| execute_plan_overlay(s, lookup, postings, ft, base_file_count))
+                .collect();
+            Ok(union_many(&lists?))
+        }
+        QueryPlan::ScanAll => {
+            // Return overlay file IDs with global offset
+            Ok(ft.all_file_ids().iter().map(|id| id + base_file_count).collect())
+        }
     }
 }
 

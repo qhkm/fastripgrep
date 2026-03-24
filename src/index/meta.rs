@@ -7,6 +7,12 @@ pub struct IndexMeta {
     pub file_count: u32,
     pub ngram_count: u32,
     pub timestamp: u64,
+    #[serde(default)]
+    pub overlay_file_count: u32,
+    #[serde(default)]
+    pub overlay_ngram_count: u32,
+    #[serde(default)]
+    pub tombstone_count: u32,
 }
 
 impl IndexMeta {
@@ -40,6 +46,9 @@ mod tests {
             file_count: 42,
             ngram_count: 100,
             timestamp: IndexMeta::timestamp_now(),
+            overlay_file_count: 0,
+            overlay_ngram_count: 0,
+            tombstone_count: 0,
         };
         meta.write(&path).unwrap();
         let loaded = IndexMeta::read(&path).unwrap();
@@ -59,6 +68,9 @@ mod tests {
             file_count: 0,
             ngram_count: 0,
             timestamp: 0,
+            overlay_file_count: 0,
+            overlay_ngram_count: 0,
+            tombstone_count: 0,
         };
         meta.write(&path).unwrap();
         let loaded = IndexMeta::read(&path).unwrap();

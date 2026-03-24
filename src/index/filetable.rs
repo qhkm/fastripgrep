@@ -122,6 +122,10 @@ impl FileTableReader {
         self.entries.get(id as usize)
     }
 
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
     pub fn all_file_ids(&self) -> Vec<u32> {
         (0..self.entries.len() as u32).collect()
     }

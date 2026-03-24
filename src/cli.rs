@@ -89,7 +89,7 @@ enum Commands {
         #[arg(long = "type")]
         file_type: Option<String>,
     },
-    /// Rebuild the index (full rebuild; incremental updates planned for v0.2)
+    /// Update the index incrementally
     Update {
         #[arg(default_value = ".")]
         path: PathBuf,
@@ -246,9 +246,18 @@ pub fn run() -> Result<()> {
         }
         Commands::Update { path } => {
             let root = std::fs::canonicalize(&path)?;
-            eprintln!("Rebuilding index...");
-            index::build_index(&root, 10 * 1024 * 1024)?;
-            eprintln!("Done (full rebuild; incremental updates planned for v0.2).");
+            eprintln!("Updating index...");
+            index::update_index(&root, 10 * 1024 * 1024)?;
+            let gen = index::current_generation(&root)?;
+            let meta = index::meta::IndexMeta::read(&gen.join("meta.json"))?;
+            if meta.overlay_file_count > 0 || meta.tombstone_count > 0 {
+                eprintln!(
+                    "Done. {} base files, {} overlay files, {} tombstoned.",
+                    meta.file_count, meta.overlay_file_count, meta.tombstone_count
+                );
+            } else {
+                eprintln!("Done. No changes detected.");
+            }
             Ok(())
         }
         Commands::Status { path } => {
