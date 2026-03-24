@@ -126,6 +126,10 @@ impl FileTableReader {
         self.entries.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
     pub fn all_file_ids(&self) -> Vec<u32> {
         (0..self.entries.len() as u32).collect()
     }
