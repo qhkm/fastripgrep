@@ -29,17 +29,25 @@ Tested on openclaw (9,000 files), case-sensitive, warm cache, output to `/dev/nu
 
 ## Install
 
+### Homebrew (macOS / Linux)
+
+```bash
+brew install qhkm/tap/frg
+```
+
+### Install script
+
 ```
 curl -fsSL https://raw.githubusercontent.com/qhkm/fastripgrep/main/install.sh | sh
 ```
 
-Or via cargo:
+### Cargo
 
 ```
 cargo install fastripgrep
 ```
 
-Or build from source:
+### Build from source
 
 ```bash
 git clone https://github.com/qhkm/fastripgrep
@@ -47,11 +55,6 @@ cd fastripgrep
 cargo build --release
 # Binary at target/release/frg
 ```
-
-Homebrew status: formula files exist in [`Formula/`](./Formula) and
-[`HomebrewFormula/`](./HomebrewFormula), but there is no published tap or
-release automation generating Homebrew checksums yet. Today, use the install
-script, `cargo install`, or build from source.
 
 ## Usage
 
@@ -219,19 +222,19 @@ Match counts are identical to ripgrep (case-sensitive mode) across all tested pa
 
 frg ships with skill files and a `CLAUDE.md` that coding agents can pick up automatically.
 
-### Claude Code (Plugin)
+### Claude Code
 
-Install as a Claude Code plugin — adds `/frg-search` and `/frg-replace` skills:
+**Easiest — copy `CLAUDE.md` into your project root** (Claude Code reads it automatically):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/qhkm/fastripgrep/main/CLAUDE.md > CLAUDE.md
+```
+
+**Or install as a plugin** — adds `/frg-search` and `/frg-replace` skills:
 
 ```
 /plugin marketplace add qhkm/fastripgrep
 /plugin install frg@frg-marketplace
-```
-
-Or manually copy `CLAUDE.md` into your project root for automatic pickup:
-
-```bash
-cp /path/to/fastripgrep/CLAUDE.md .claude/CLAUDE.md
 ```
 
 ### Cursor / Windsurf / Other Agents
@@ -316,7 +319,7 @@ cargo clippy        # Zero warnings
 
 **Adoption:**
 - [x] ~~`frg watch`~~ — auto-updates index on file changes with debouncing
-- [ ] Homebrew tap — formula draft exists in `Formula/` and `HomebrewFormula/`, but `brew install frg` is not published yet; needs a tap repo and release automation with checksums
+- [x] ~~Homebrew tap~~ — `brew install qhkm/tap/frg`
 
 **Editor integrations:**
 - [ ] VS Code extension — use frg as search backend
