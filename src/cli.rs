@@ -95,6 +95,9 @@ enum Commands {
         /// Follow symbolic links
         #[arg(long)]
         follow: bool,
+        /// Additional patterns (combined with OR)
+        #[arg(short = 'e', long = "regexp")]
+        extra_patterns: Vec<String>,
     },
     /// Update the index incrementally
     Update {
@@ -168,12 +171,25 @@ pub fn run() -> Result<()> {
             glob,
             file_type,
             follow,
+            extra_patterns,
         } => {
             let root = std::fs::canonicalize(&path)?;
 
+            // Combine main pattern with extra patterns using alternation
+            let combined_pattern = if extra_patterns.is_empty() {
+                pattern.clone()
+            } else {
+                let mut all = vec![pattern.clone()];
+                all.extend(extra_patterns);
+                all.iter()
+                    .map(|p| format!("(?:{})", p))
+                    .collect::<Vec<_>>()
+                    .join("|")
+            };
+
             // Smart case: if pattern is all lowercase and -i is not set, enable case-insensitive
-            let effective_ci =
-                case_insensitive || (smart_case && !pattern.chars().any(|c| c.is_uppercase()));
+            let effective_ci = case_insensitive
+                || (smart_case && !combined_pattern.chars().any(|c| c.is_uppercase()));
 
             let opts = SearchOptions {
                 case_insensitive: effective_ci,
@@ -199,9 +215,9 @@ pub fn run() -> Result<()> {
 
             // Check if pattern qualifies for streaming fast path
             let effective_pattern = if opts.literal {
-                regex::escape(&pattern)
+                regex::escape(&combined_pattern)
             } else {
-                pattern.clone()
+                combined_pattern.clone()
             };
             let effective_pattern = if opts.case_insensitive {
                 format!("(?i){}", effective_pattern)
@@ -212,7 +228,13 @@ pub fn run() -> Result<()> {
 
             if kind != search::PatternKind::Normal && context == 0 && !json {
                 // Streaming fast path: no collection, no Match structs
-                let n = search::search_streaming(&root, &pattern, &opts, &mut out, use_color)?;
+                let n = search::search_streaming(
+                    &root,
+                    &combined_pattern,
+                    &opts,
+                    &mut out,
+                    use_color,
+                )?;
                 if quiet {
                     process::exit(if n == 0 { 1 } else { 0 });
                 }
@@ -221,7 +243,7 @@ pub fn run() -> Result<()> {
                 }
             } else {
                 // Standard path: collect matches, format output
-                let matches = search::search(&root, &pattern, &opts)?;
+                let matches = search::search(&root, &combined_pattern, &opts)?;
 
                 if quiet {
                     process::exit(if matches.is_empty() { 1 } else { 0 });
