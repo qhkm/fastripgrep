@@ -1,6 +1,6 @@
 <div align="center">
 
-# frg
+# FRG — Fast Rip Grep
 
 **Faster than ripgrep. Every pattern. Every time.**
 
