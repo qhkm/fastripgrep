@@ -234,25 +234,35 @@ Match counts are identical to ripgrep (case-sensitive mode) across all tested pa
 | Edge cases | Anchors `^$`, Unicode, empty pattern, zero results, symlinks |
 
 ```bash
-cargo test          # 78 tests
+cargo test          # 82 tests
 cargo bench         # Criterion benchmarks (1K + 5K file repos)
 cargo clippy        # Zero warnings
 ```
 
 ## Roadmap
 
-**High impact:**
-- [x] ~~Incremental index updates~~ — **Done.** `frg update` now detects changed/new/deleted files and writes only an overlay (~70ms vs 21s full rebuild). Search merges base + overlay transparently
+**Done:**
+- [x] Incremental index updates — overlay/tombstone architecture (~70ms vs 21s full rebuild)
 
-**Medium impact:**
-- [ ] Corpus-derived weight table — current weights are a deterministic hash placeholder. Real inverse-frequency weights from open-source code would improve n-gram selectivity (fewer false positive candidates)
-- [ ] `--follow` flag — symlink following is hardcoded to `false` (matching ripgrep default). Should be user-controllable
+**Adoption:**
+- [ ] `frg watch` — auto-update index on file changes (fsnotify), no manual `frg update` needed
+- [ ] Homebrew formula — `brew install fastripgrep`
+- [ ] Shell completions — bash, zsh, fish (via clap_complete)
+- [ ] Man page generation
 
-**Low priority:**
-- [ ] Monotone-stack n-gram extraction — `build_all` is already O(n) per file due to the 64-byte cap. A true monotone-stack algorithm would remove the cap while staying O(n), but the current bounded approach works well in practice
+**Editor integrations:**
+- [ ] VS Code extension — use frg as search backend
+- [ ] Neovim plugin — `:Frg` command with quickfix integration
 
-**Verified not needed:**
-- ~Parallel directory walking~ — measured at 111ms (0.4% of index time on 9K files). Not a bottleneck.
+**Performance:**
+- [ ] Corpus-derived weight table — real inverse-frequency weights from open-source code for better n-gram selectivity
+- [ ] Monotone-stack n-gram extraction — remove the 64-byte cap while staying O(n)
+
+**Features:**
+- [ ] `--follow` flag — user-controllable symlink following
+- [ ] `frg init` — auto-detect project type, suggest `.frgignore`, optional git hook for auto-indexing
+- [ ] Multi-pattern search — `frg search -e "pat1" -e "pat2"` (like grep -e)
+- [ ] `--replace` / `frg replace` — search and replace with preview
 
 ## License
 
