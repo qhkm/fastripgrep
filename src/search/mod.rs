@@ -59,17 +59,22 @@ pub fn search(root: &Path, pattern: &str, opts: &SearchOptions) -> Result<Vec<Ma
     let plan = build_query_plan(&effective);
     let candidates = execute_plan(&plan, &lookup, &postings_data, &file_table)?;
 
-    let mut all_matches = Vec::new();
-    for fid in &candidates {
-        if let Some(entry) = file_table.get(*fid) {
+    // Collect candidate paths, filtering first
+    let candidate_paths: Vec<_> = candidates.iter()
+        .filter_map(|fid| {
+            let entry = file_table.get(*fid)?;
             let full_path = root.join(&entry.path);
-            if !matches_filters(&full_path, opts) {
-                continue;
-            }
-            let m = verify_file(&full_path, &re, opts.max_count, opts.context);
-            all_matches.extend(m);
-        }
-    }
+            if matches_filters(&full_path, opts) { Some(full_path) } else { None }
+        })
+        .collect();
+
+    // Verify in parallel with rayon
+    use rayon::prelude::*;
+    let all_matches: Vec<Match> = candidate_paths
+        .par_iter()
+        .flat_map(|path| verify_file(path, &re, opts.max_count, opts.context))
+        .collect();
+
     Ok(all_matches)
 }
 

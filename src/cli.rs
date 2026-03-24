@@ -119,9 +119,14 @@ pub fn run() -> Result<()> {
 
             let use_color = output::color::should_color();
 
+            // Use buffered stdout to avoid per-line flush overhead
+            use std::io::Write;
+            let stdout = std::io::stdout();
+            let mut out = std::io::BufWriter::new(stdout.lock());
+
             if files_only {
                 for f in &output::unique_files(&matches) {
-                    println!("{}", f);
+                    let _ = writeln!(out, "{}", f);
                 }
             } else if count {
                 let mut counts = std::collections::HashMap::new();
@@ -131,20 +136,20 @@ pub fn run() -> Result<()> {
                 let mut sorted: Vec<_> = counts.into_iter().collect();
                 sorted.sort_by_key(|(p, _)| p.to_string());
                 for (p, c) in sorted {
-                    println!("{}", output::format_count(p, c, use_color));
+                    let _ = writeln!(out, "{}", output::format_count(p, c, use_color));
                 }
             } else if json {
                 for m in &matches {
-                    println!("{}", output::format_match_json(m));
+                    let _ = writeln!(out, "{}", output::format_match_json(m));
                 }
             } else {
                 for m in &matches {
                     for (ln, content) in &m.context_before {
-                        println!("{}", output::format_context_line(*ln, content, &m.file_path, use_color));
+                        let _ = writeln!(out, "{}", output::format_context_line(*ln, content, &m.file_path, use_color));
                     }
-                    println!("{}", output::format_match(m, use_color));
+                    let _ = writeln!(out, "{}", output::format_match(m, use_color));
                     for (ln, content) in &m.context_after {
-                        println!("{}", output::format_context_line(*ln, content, &m.file_path, use_color));
+                        let _ = writeln!(out, "{}", output::format_context_line(*ln, content, &m.file_path, use_color));
                     }
                 }
             }

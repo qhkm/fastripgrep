@@ -18,7 +18,14 @@ pub fn verify_file(path: &Path, re: &Regex, max_count: Option<usize>, context: u
         Err(_) => return Vec::new(),
     };
 
-    let file_path = path.to_string_lossy().to_string();
+    let file_path = path.to_string_lossy().into_owned();
+
+    // First pass: find matching line indices and offsets using memchr-style scanning
+    // to avoid splitting into lines when there are no matches
+    if !re.is_match(&content) {
+        return Vec::new();
+    }
+
     let lines: Vec<&[u8]> = content.split(|&b| b == b'\n').collect();
     let mut matches = Vec::new();
 
@@ -35,18 +42,18 @@ pub fn verify_file(path: &Path, re: &Regex, max_count: Option<usize>, context: u
             if context > 0 {
                 let start = line_idx.saturating_sub(context);
                 for (ci, line) in lines.iter().enumerate().take(line_idx).skip(start) {
-                    ctx_before.push((ci + 1, String::from_utf8_lossy(line).to_string()));
+                    ctx_before.push((ci + 1, String::from_utf8_lossy(line).into_owned()));
                 }
                 let end = (line_idx + 1 + context).min(lines.len());
                 for (ci, line) in lines.iter().enumerate().take(end).skip(line_idx + 1) {
-                    ctx_after.push((ci + 1, String::from_utf8_lossy(line).to_string()));
+                    ctx_after.push((ci + 1, String::from_utf8_lossy(line).into_owned()));
                 }
             }
 
             matches.push(Match {
                 file_path: file_path.clone(),
                 line_number: line_idx + 1,
-                line_content: String::from_utf8_lossy(line).to_string(),
+                line_content: String::from_utf8_lossy(line).into_owned(),
                 match_start: m.start(),
                 match_end: m.end(),
                 context_before: ctx_before,
