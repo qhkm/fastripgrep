@@ -37,6 +37,12 @@ fn dirs_next() -> Option<PathBuf> {
     std::env::var("HOME").ok().map(PathBuf::from)
 }
 
+/// Check if agent mode is active (FRG_AGENT=1 env var).
+/// Agent mode: auto-index, JSON output, no colors, no progress bars.
+fn is_agent_mode() -> bool {
+    std::env::var("FRG_AGENT").is_ok_and(|v| v == "1" || v == "true")
+}
+
 #[derive(Parser)]
 #[command(
     name = "frg",
@@ -45,7 +51,7 @@ fn dirs_next() -> Option<PathBuf> {
 )]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -161,15 +167,81 @@ enum Commands {
     },
 }
 
+/// Ensure index exists for a root directory. In agent mode or with auto_index,
+/// silently builds if missing. Returns Ok(true) if index is available.
+fn ensure_index(root: &std::path::Path, agent: bool) -> Result<bool> {
+    if index::current_generation(root).is_ok() {
+        return Ok(true);
+    }
+    if agent {
+        // Silently build index
+        indicatif::ProgressBar::set_draw_target(
+            &indicatif::ProgressBar::new(0),
+            indicatif::ProgressDrawTarget::hidden(),
+        );
+        index::build_index(root, 10 * 1024 * 1024)?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
 pub fn run() -> Result<()> {
-    // Merge config file args with CLI args
+    let agent = is_agent_mode();
+
+    // Handle shorthand: `frg "pattern"` -> `frg search "pattern" .`
+    // Check if the first non-flag arg is NOT a known subcommand
+    let raw_args: Vec<String> = std::env::args().collect();
+    let first_arg = raw_args.get(1).map(|s| s.as_str());
+    let known_commands = [
+        "index", "search", "update", "status", "upgrade", "init",
+        "watch", "man", "completions", "replace", "help",
+    ];
+    let is_shorthand = first_arg.is_some_and(|a| {
+        !a.starts_with('-') && !known_commands.contains(&a)
+    });
+
+    if is_shorthand {
+        let pattern = raw_args[1].clone();
+        // Remaining args after pattern (could be path and/or flags)
+        let rest: Vec<String> = raw_args[2..].to_vec();
+        let mut extra_args = vec!["frg".to_string(), "search".to_string(), pattern];
+        if rest.is_empty() {
+            extra_args.push(".".to_string());
+        } else {
+            extra_args.extend(rest);
+        }
+
+        let config_args = load_config_args();
+        let all_args = std::iter::once(extra_args[0].clone())
+            .chain(config_args)
+            .chain(extra_args[1..].iter().cloned());
+        let cli = Cli::parse_from(all_args);
+        let command = cli.command.unwrap();
+        return run_command(command, agent);
+    }
+
+    // Normal parsing
     let config_args = load_config_args();
     let all_args = std::iter::once(std::env::args().next().unwrap_or_default())
         .chain(config_args)
         .chain(std::env::args().skip(1));
     let cli = Cli::parse_from(all_args);
 
-    let result = match cli.command {
+    let command = match cli.command {
+        Some(cmd) => cmd,
+        None => {
+            // No command — show help
+            let _ = Cli::parse_from(["frg", "--help"]);
+            unreachable!()
+        }
+    };
+
+    run_command(command, agent)
+}
+
+fn run_command(command: Commands, agent: bool) -> Result<()> {
+    let result = match command {
         Commands::Index {
             path,
             max_filesize,
@@ -177,14 +249,18 @@ pub fn run() -> Result<()> {
             follow,
         } => {
             let root = std::fs::canonicalize(&path)?;
-            eprintln!("Indexing {}...", root.display());
+            if !agent {
+                eprintln!("Indexing {}...", root.display());
+            }
             index::build_index_follow(&root, max_filesize, follow)?;
             let gen = index::current_generation(&root)?;
             let meta = index::meta::IndexMeta::read(&gen.join("meta.json"))?;
-            eprintln!(
-                "Done. {} files, {} n-grams.",
-                meta.file_count, meta.ngram_count
-            );
+            if !agent {
+                eprintln!(
+                    "Done. {} files, {} n-grams.",
+                    meta.file_count, meta.ngram_count
+                );
+            }
             Ok(())
         }
         Commands::Search {
@@ -206,6 +282,14 @@ pub fn run() -> Result<()> {
             extra_patterns,
         } => {
             let root = std::fs::canonicalize(&path)?;
+
+            // Agent mode or auto-index: build index if missing
+            if !no_index {
+                let _ = ensure_index(&root, agent);
+            }
+
+            // In agent mode, override json to true unless other output modes are set
+            let json = json || (agent && !files_only && !count && !quiet);
 
             // Combine main pattern with extra patterns using alternation
             let combined_pattern = if extra_patterns.is_empty() {
