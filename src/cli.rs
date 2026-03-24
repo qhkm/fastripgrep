@@ -47,7 +47,19 @@ fn is_agent_mode() -> bool {
 #[command(
     name = "frg",
     version,
-    about = "Fast regex search with sparse n-gram indexing"
+    about = "Fast regex search with sparse n-gram indexing",
+    after_help = "\
+SHORTHAND:
+  frg \"pattern\"           Equivalent to: frg search \"pattern\" .
+  frg \"pattern\" path      Equivalent to: frg search \"pattern\" path
+  frg \"pattern\" . -l -i   All search flags work with shorthand
+
+ENVIRONMENT VARIABLES:
+  FRG_AGENT=1              Agent mode: auto-index, JSON output, no stderr noise
+  FRG_CONFIG_PATH          Path to config file (default: ~/.frgrc)
+
+CONFIG FILE:
+  ~/.frgrc                 One argument per line, # comments (like ripgrep)"
 )]
 struct Cli {
     #[command(subcommand)]
