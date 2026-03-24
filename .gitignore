@@ -2,3 +2,4 @@ target/
 .frg/
 .rsgrep/
 *.proptest-regressions
+LAUNCH_POSTS.md
