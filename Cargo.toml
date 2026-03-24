@@ -1,6 +1,6 @@
 [package]
 name = "fastripgrep"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "Fast regex search with sparse n-gram indexing — faster than ripgrep on every pattern type"
 license = "MIT"
