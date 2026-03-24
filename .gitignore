@@ -1,2 +1,4 @@
 target/
 .frg/
+.rsgrep/
+*.proptest-regressions
