@@ -1,47 +1,99 @@
-# rsgrep
+# frg (fastripgrep)
 
 Fast regex search with sparse n-gram indexing. Inspired by [Cursor's fast regex search](https://cursor.com/blog/fast-regex-search).
 
-Instead of scanning every file like `grep` or `ripgrep`, rsgrep pre-builds an index of sparse n-grams and uses it to narrow candidates before running the regex — achieving sub-50ms searches on large codebases.
+Instead of scanning every file like `grep` or `ripgrep`, frg pre-builds an index of sparse n-grams and uses it to narrow candidates before running the regex — achieving sub-50ms searches on large codebases.
 
 ## Benchmarks
 
-Tested on a real 9,000-file codebase (openclaw), warm cache:
+Tested on openclaw (9,000 files), case-sensitive, warm cache, output to `/dev/null`:
 
-| Pattern | grep | ripgrep | rsgrep | rsgrep vs grep | rsgrep vs rg |
-|---------|------|---------|--------|----------------|--------------|
-| `renderUsage` (selective) | 1,553ms | 50ms | **11ms** | 141x | 4.5x |
-| `import.*from.*react` (regex) | 1,080ms | 94ms | **60ms** | 18x | 1.6x |
-| `function` (broad, ~24K hits) | 398ms | 94ms | **60ms** | 6.6x | 1.6x |
-| `useState\|useEffect` (alternation) | 962ms | 52ms | **13ms** | 74x | 4x |
-| `^\s*export\s` (anchored) | — | 74ms | **31ms** | — | 2.4x |
-| `TODO\|FIXME\|HACK\|XXX\|BUG` (multi-alt) | — | 56ms | **32ms** | — | 1.8x |
-| `xyzzy_nothing` (zero results) | — | 52ms | **12ms** | — | 4.3x |
+| Pattern | Type | grep | ripgrep | frg | vs rg |
+|---------|------|------|---------|--------|-------|
+| `renderUsage` | selective | 1,553ms | 53ms | **10ms** | **5.3x** |
+| `useState\|useEffect` | alternation | 962ms | 54ms | **13ms** | **4.2x** |
+| `.*` | wildcard | — | 197ms | **74ms** | **2.7x** |
+| `TODO\|FIXME\|HACK\|XXX\|BUG` | multi-alt | — | 53ms | **21ms** | **2.5x** |
+| `import.*from.*react` | regex | 1,080ms | 84ms | **50ms** | **1.7x** |
+| `x` | single byte | — | 102ms | **59ms** | **1.7x** |
+| `function` (24K hits) | broad | 398ms | 75ms | **51ms** | **1.5x** |
+| `^\s*export\s` | anchored | — | 72ms | **68ms** | **1.06x** |
 
-- **rsgrep beats ripgrep on every pattern type tested**
-- Index build: ~23s for 9K files (one-time cost, pays for itself after a few searches)
-- **100% recall** — match counts are identical to ripgrep (case-sensitive mode)
+**frg wins on all 8 pattern types.** 100% match count parity with ripgrep.
+
+### How
+
+- **Indexed patterns** (6/8): sparse n-gram index pre-filters to ~5 candidate files out of 9,000 before regex verification
+- **ScanAll patterns** (2/8): parallel file I/O with rayon, SIMD-accelerated byte search via memchr, zero-copy streaming output (no `Match` struct allocation for millions of results)
+- **Index build**: ~23s one-time cost for 9K files, pays for itself after a few searches
 
 ## Install
 
 ```bash
-cargo install --path .
+cargo install fastripgrep
+```
+
+Or build from source:
+
+```bash
+git clone https://github.com/qhkm/fastripgrep
+cd fastripgrep
+cargo build --release
+# Binary at target/release/frg
 ```
 
 ## Usage
 
 ```bash
-# Build the index (required once, re-run after major changes)
-rsgrep index [path]
+# Build the index (one-time, re-run after major changes)
+frg index [path]
 
-# Search
-rsgrep search <pattern> [path]
-
-# Check index status
-rsgrep status [path]
+# Search (uses index if available)
+frg search <pattern> [path]
 
 # Rebuild index
-rsgrep update [path]
+frg update [path]
+
+# Show index stats
+frg status [path]
+```
+
+### Examples
+
+```bash
+# Find a specific function
+frg search "handleExport" .
+
+# Regex with alternation
+frg search "useState|useEffect" .
+
+# Case-insensitive
+frg search -i "config" .
+
+# Smart case (lowercase = insensitive, mixed = sensitive)
+frg search -S "config" .     # matches Config, CONFIG, config
+frg search -S "Config" .     # matches Config only
+
+# Fixed string (no regex interpretation)
+frg search -F '${variable}' .
+
+# Files only
+frg search -l "TODO" .
+
+# Count matches per file
+frg search -c "function" .
+
+# Context lines
+frg search -C 3 "error" .
+
+# Filter by file type
+frg search --type ts "import" .
+
+# JSON output
+frg search --json "pattern" .
+
+# Brute force (skip index, like ripgrep)
+frg search -n "pattern" .
 ```
 
 ## Search Flags
@@ -63,130 +115,94 @@ rsgrep update [path]
 
 ## Configuration
 
-rsgrep supports a config file with default arguments, like ripgrep.
+frg supports a config file with default arguments, like ripgrep.
 
-**Location:** `~/.rsgreprc` or set `RSGREP_CONFIG_PATH` env var.
+**Location:** `~/.frgrc` or `$FRG_CONFIG_PATH`
 
-**Format:** One argument per line. Lines starting with `#` are comments.
+**Format:** One argument per line. `#` comments. Empty lines ignored.
 
 ```bash
-# ~/.rsgreprc
-# Smart case by default (case-insensitive when pattern is all lowercase)
---smart-case
+# ~/.frgrc
 
-# Always show line numbers (already default)
---context=0
+# Smart case by default
+--smart-case
 ```
 
 ## How It Works
 
-### The Problem with Traditional Grep
+### The Core Idea
 
-`grep` and `ripgrep` are brute-force tools — they scan every byte of every file on every search. On a 9,000-file codebase, even ripgrep (with SIMD-accelerated regex) takes 50-100ms because it must read every file from disk.
+`grep` and `ripgrep` scan every file on every search. frg builds an index once and uses it to skip 99% of files:
 
-rsgrep takes a different approach: **build an index once, then use it to skip 99% of files**.
+| Approach | Strategy | Time on 9K files |
+|----------|----------|-----------------|
+| grep | Scan all files, match regex | ~1,000ms |
+| ripgrep | Scan all files, SIMD regex | ~50-100ms |
+| frg | Index lookup + read ~5 files | ~10-70ms |
 
 ### Sparse N-gram Indexing
 
-The core idea comes from [Cursor's blog post](https://cursor.com/blog/fast-regex-search) on how they built fast search for their IDE. Instead of fixed-length trigrams (3-character substrings), rsgrep uses **sparse n-grams** — variable-length substrings selected by a deterministic weight function.
+frg uses **sparse n-grams** — variable-length byte substrings selected by a deterministic weight function. This is the approach described in [Cursor's blog post](https://cursor.com/blog/fast-regex-search).
 
-#### The Weight Table
-
-rsgrep ships with a static 256x256 byte-pair weight table. Each entry `W[a][b]` assigns a weight to the byte pair `(a, b)`. In a production system, these weights would be derived from inverse frequency in a large open-source corpus (rare pairs get high weights, common pairs like `th` get low weights).
-
-#### What Makes an N-gram "Sparse"
-
-Given content bytes `b[0..n)`, define pair weights:
+A 256x256 byte-pair weight table assigns a weight `W[a][b]` to each byte pair. A substring is a **sparse n-gram** if its edge pair-weights are **strictly greater** than all interior pair-weights:
 
 ```
-p[i] = W[b[i]][b[i + 1]]
+p[l] > max(p[l+1 .. r-3])  AND  p[r-2] > max(p[l+1 .. r-3])
 ```
 
-A substring `b[l..r)` is a **sparse n-gram** if and only if the pair weights at both edges are **strictly greater** than every interior pair weight:
+For 2-3 byte substrings, the interior is empty, so the condition is vacuously true. Sparse n-grams form a **laminar family** (non-crossing), which makes the covering algorithm correct.
 
-```
-p[l] > max(p[l+1 .. r-3])
-AND
-p[r-2] > max(p[l+1 .. r-3])
-```
+### Indexing
 
-For 2-byte and 3-byte substrings, the interior is empty, so the condition is vacuously true. This means sparse n-grams are naturally variable-length: rare byte combinations produce longer, more selective n-grams.
+1. Walk directory (respects `.gitignore`, `.frg-ignore`), skip binary files
+2. Extract all sparse n-grams from each file in parallel (`build_all`, O(n) per file with 64-byte cap)
+3. Build inverted index: n-gram hash (xxh3) -> sorted posting list of file IDs
+4. Store as mmap-friendly binary: delta-varint posting lists + linear-probing hash table (0.7 load factor)
 
-#### Structural Property: Non-Crossing (Laminarity)
+### Searching
 
-Sparse n-grams form a **laminar family** — any two valid intervals are either disjoint, nested, or touching, but never crossing. This property is what makes the covering algorithm correct.
-
-### Indexing (`rsgrep index`)
-
-1. **Walk** the directory respecting `.gitignore` and `.rsgrep-ignore`, skip files over 10MB
-2. **Extract sparse n-grams** using `build_all` — enumerate all valid sparse n-grams in each file (O(n) per file with a 64-byte cap on n-gram length). Binary files (null bytes in first 8KB) are skipped.
-3. **Build an inverted index** — for each unique n-gram, store a sorted posting list of file IDs that contain it
-4. **Encode and store** — posting lists use delta-varint compression; the lookup table is a linear-probing hash table (load factor 0.7, 20 bytes per slot) designed to be memory-mapped
-
-```
-Input file: "fn handleExport() { ... }"
-
-Pair weights:  [f,n]=42  [n, ]=8  [ ,h]=180  [h,a]=15  ...
-
-Sparse n-grams extracted:
-  "fn"        (2 bytes, vacuously valid)
-  "fn "       (3 bytes, vacuously valid)
-  " handleE"  (8 bytes, edges [' ',h]=180 and [l,e]=195 dominate interior)
-  ...
-
-Each n-gram hashed (xxh3) → posting list updated with this file's ID
-```
-
-### Searching (`rsgrep search`)
-
-1. **Parse** the regex into a high-level IR using `regex-syntax`
-2. **Extract mandatory literals** — walk the AST to find byte sequences that *must* appear in any match. `foo.*bar` yields `["foo", "bar"]`. Alternations like `foo|bar` produce branch-local literals.
-3. **Compute covering set** — for each mandatory literal, run `build_covering` to find the minimum-cardinality set of sparse n-grams that covers every byte position. This uses a greedy interval-cover algorithm:
-   - Start at the leftmost uncovered position
-   - Among all valid sparse n-grams that cover this position, pick the one reaching farthest right
-   - Advance past it and repeat
-4. **Build query plan** — combine covering n-grams into a tree: AND for concatenated literals, OR for alternation branches
-5. **Execute** — look up each n-gram's posting list from the mmap'd hash table, then intersect (AND) or union (OR) them
-6. **Verify** — only the resulting candidate files (typically 5-10 out of thousands) are read and matched against the full regex in parallel
+1. Parse regex AST, extract mandatory literals
+2. Compute minimum-cardinality covering set of sparse n-grams for each literal (`build_covering`)
+3. Build query plan: AND for concatenations, OR for alternations
+4. Intersect/union posting lists to get candidate file IDs
+5. Verify candidates with full regex in parallel
 
 ```
 Query: "handleExport"
-
-Step 1: Extract literal → "handleExport"
-Step 2: build_covering → [" handleE", "Export"] (2 n-grams)
-Step 3: Query plan → AND(lookup(" handleE"), lookup("Export"))
-Step 4: Posting lists → {file_3, file_7, file_42} ∩ {file_7, file_42, file_100}
-Step 5: Candidates → {file_7, file_42}
-Step 6: Verify → read 2 files instead of 9,000
+  -> Covering n-grams: ["handleE", "Export"]
+  -> Posting lists: {3,7,42} AND {7,42,100} = {7,42}
+  -> Verify 2 files instead of 9,000
 ```
 
-### Why It's Fast
+### Fast Path for ScanAll Patterns
 
-| Approach | Work per search | On 9K files |
-|----------|----------------|-------------|
-| `grep` | Read every file, match regex | ~1,000ms |
-| `ripgrep` | Read every file, SIMD regex | ~50-100ms |
-| `rsgrep` | Hash lookup + read ~5 files | ~10-60ms |
+When a pattern has no extractable literals (`.*`, single char `x`), frg can't use the index. Instead of falling back to slow brute force, it uses optimized parallel scanning:
 
-The index turns an O(total bytes) problem into an O(candidate files) problem. For selective patterns (specific function names, unique strings), the candidate set is tiny — often just 2-5 files out of thousands.
+- **`.*` / empty**: Skip regex entirely, output every line directly via parallel rayon workers with zero-copy byte output
+- **Single byte (`x`)**: Use `memchr` (SIMD-accelerated SSE2/AVX2/NEON) instead of regex engine
+- **All patterns**: Files processed in parallel with rayon, output buffers merged in file order
 
-The trade-off is a one-time index build cost (~23s for 9K files). This pays for itself after just a few searches.
+This makes frg 1.7-2.7x faster than ripgrep even on patterns the index can't help with.
 
 ### Recall Guarantee
 
-rsgrep **never misses matches**. The index is a pre-filter: any file that matches the regex is guaranteed to appear in the candidate set (because it must contain all the mandatory literals, and therefore all the covering n-grams). False positives are possible (a file passes the index filter but doesn't match the regex), but false negatives are not. The final regex verification step ensures 100% correctness.
+frg **never misses matches**. The index is a pre-filter — any file matching the regex is guaranteed to be in the candidate set. False positives are possible (filtered by verification), false negatives are not.
+
+Match counts are identical to ripgrep (case-sensitive mode) across all tested patterns.
 
 ## Architecture
 
 ```
-.rsgrep/
+.frg/
 ├── CURRENT                    # Active generation ID
 └── generations/<id>/
-    ├── meta.json              # Version, commit hash, file count
-    ├── postings.bin           # Delta-varint posting lists
-    ├── lookup.bin             # Mmap'd hash table (20-byte slots, 0.7 load factor)
-    └── files.bin              # File ID → path mapping
+    ├── meta.json              # Version, commit hash, file count, n-gram count
+    ├── postings.bin           # Delta-varint encoded posting lists
+    ├── lookup.bin             # Mmap'd hash table (20-byte slots)
+    └── files.bin              # File ID -> path + metadata mapping
 ```
+
+**Key dependencies:** `regex` + `regex-syntax` (matching), `memmap2` (mmap), `rayon` (parallelism), `memchr` (SIMD byte search), `ignore` (gitignore), `xxhash-rust` (stable hashing), `clap` (CLI)
 
 ## Exit Codes
 
@@ -196,28 +212,34 @@ rsgrep **never misses matches**. The index is a pre-filter: any file that matche
 | 1 | No match found |
 | 2 | Error |
 
-## Edge Cases Tested
+## Correctness
 
-| Case | Behavior |
+78 tests covering:
+
+| Area | Coverage |
 |------|----------|
-| Empty pattern | Matches every line (full scan) |
-| Single character `x` | Falls back to full scan (no 2-byte n-gram) |
-| Pure wildcard `.*` | Falls back to full scan |
-| Literal special chars `${` | Works with `-F` |
-| Complex char class `[A-Z][a-z]+[A-Z]\w*` | Falls back, matches correctly |
-| Zero results | Index returns empty, exits in ~12ms |
-| Multi-branch alternation | OR query plan |
-| Anchored patterns `^\s*export\s` | Correct line-boundary matching |
-| Unicode `→` | Byte-level matching |
-| Case-insensitive + smart-case | `-i` and `-S` flags |
-
-## Development
+| N-gram extraction | build_all, build_covering, weight table, strict `>`, laminarity |
+| Posting lists | Delta-varint roundtrip, empty/single/multi |
+| Lookup table | Linear probing, hash collisions, magic validation |
+| File table | Roundtrip, non-UTF-8 paths (Unix), all IDs |
+| Regex decomposition | Literals, alternation OR, wildcards, single-char fallback |
+| Search pipeline | Indexed vs brute-force parity, binary exclusion, ScanAll fallback |
+| Property tests | Covering subset of all, pair coverage, laminarity, greedy optimality |
+| Edge cases | Anchors `^$`, Unicode, empty pattern, zero results, symlinks |
 
 ```bash
-cargo test          # 73 tests
-cargo bench         # Criterion benchmarks
-cargo clippy        # Lint
+cargo test          # 78 tests
+cargo bench         # Criterion benchmarks (1K + 5K file repos)
+cargo clippy        # Zero warnings
 ```
+
+## Roadmap
+
+- [ ] Incremental index updates (overlay/tombstone architecture)
+- [ ] O(n) n-gram extraction (monotone-stack optimization)
+- [ ] Corpus-derived weight table (inverse frequency from real code)
+- [ ] `--follow` flag for symlink control
+- [ ] Parallel directory walking (ignore crate parallel walker)
 
 ## License
 

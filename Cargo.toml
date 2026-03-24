@@ -1,8 +1,16 @@
 [package]
-name = "rsgrep"
+name = "fastripgrep"
 version = "0.1.0"
 edition = "2021"
-description = "Fast regex search with sparse n-gram indexing"
+description = "Fast regex search with sparse n-gram indexing — faster than ripgrep on every pattern type"
+license = "MIT"
+repository = "https://github.com/qhkm/fastripgrep"
+keywords = ["grep", "search", "regex", "ngram", "index"]
+categories = ["command-line-utilities", "text-processing"]
+
+[[bin]]
+name = "frg"
+path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }

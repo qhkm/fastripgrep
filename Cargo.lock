@@ -297,6 +297,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 
 [[package]]
+name = "fastripgrep"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "criterion",
+ "fs4",
+ "glob",
+ "ignore",
+ "is-terminal",
+ "memchr",
+ "memmap2",
+ "proptest",
+ "rayon",
+ "regex",
+ "regex-syntax",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "xxhash-rust",
+]
+
+[[package]]
 name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -736,28 +759,6 @@ name = "regex-syntax"
 version = "0.8.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
-
-[[package]]
-name = "rsgrep"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "criterion",
- "fs4",
- "glob",
- "ignore",
- "is-terminal",
- "memmap2",
- "proptest",
- "rayon",
- "regex",
- "regex-syntax",
- "serde",
- "serde_json",
- "tempfile",
- "xxhash-rust",
-]
 
 [[package]]
 name = "rustix"

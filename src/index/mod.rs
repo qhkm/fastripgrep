@@ -1,8 +1,8 @@
+pub mod filetable;
+pub mod lookup;
+pub mod meta;
 pub mod ngram;
 pub mod postings;
-pub mod lookup;
-pub mod filetable;
-pub mod meta;
 
 use anyhow::Result;
 use rayon::prelude::*;
@@ -12,14 +12,14 @@ use std::io::Write;
 use std::path::Path;
 
 use crate::ignore::walk_files;
+use filetable::FileTableBuilder;
+use lookup::{write_lookup_table, LookupEntry};
+use meta::IndexMeta;
 use ngram::{build_all, hash_ngram};
 use postings::encode_posting_list;
-use lookup::{LookupEntry, write_lookup_table};
-use filetable::FileTableBuilder;
-use meta::IndexMeta;
 
 pub fn build_index(root: &Path, max_filesize: u64) -> Result<()> {
-    let index_dir = root.join(".rsgrep");
+    let index_dir = root.join(".frg");
     fs::create_dir_all(&index_dir)?;
 
     // Acquire writer lock
@@ -48,7 +48,8 @@ pub fn build_index(root: &Path, max_filesize: u64) -> Result<()> {
                 return None;
             }
             let metadata = fs::metadata(path).ok()?;
-            let mtime = metadata.modified()
+            let mtime = metadata
+                .modified()
                 .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -56,10 +57,13 @@ pub fn build_index(root: &Path, max_filesize: u64) -> Result<()> {
             let relative = path.strip_prefix(root).unwrap_or(path).to_path_buf();
             // O(n * MAX_NGRAM_LEN) per file
             let spans = build_all(&content);
-            let ngrams: Vec<Vec<u8>> = spans.iter()
-                .map(|&(s, e)| content[s..e].to_vec())
-                .collect();
-            Some(FileData { relative, mtime, size: metadata.len(), ngrams })
+            let ngrams: Vec<Vec<u8>> = spans.iter().map(|&(s, e)| content[s..e].to_vec()).collect();
+            Some(FileData {
+                relative,
+                mtime,
+                size: metadata.len(),
+                ngrams,
+            })
         })
         .collect();
 
@@ -95,7 +99,11 @@ pub fn build_index(root: &Path, max_filesize: u64) -> Result<()> {
         let encoded = encode_posting_list(ids);
         let length = encoded.len() as u32;
         postings_data.extend_from_slice(&encoded);
-        lookup_entries.push(LookupEntry { hash: *hash, offset, length });
+        lookup_entries.push(LookupEntry {
+            hash: *hash,
+            offset,
+            length,
+        });
     }
 
     // Write to generation directory
@@ -148,9 +156,10 @@ fn get_git_commit(root: &Path) -> Option<String> {
 }
 
 pub fn current_generation(root: &Path) -> Result<std::path::PathBuf> {
-    let index_dir = root.join(".rsgrep");
+    let index_dir = root.join(".frg");
     let current = fs::read_to_string(index_dir.join("CURRENT"))?
-        .trim().to_string();
+        .trim()
+        .to_string();
     Ok(index_dir.join("generations").join(current))
 }
 
@@ -158,10 +167,15 @@ pub fn index_status(root: &Path) -> Result<()> {
     let gen_dir = current_generation(root)?;
     let meta = IndexMeta::read(&gen_dir.join("meta.json"))?;
     let age = IndexMeta::timestamp_now().saturating_sub(meta.timestamp);
-    let age_str = if age < 60 { format!("{}s ago", age) }
-        else if age < 3600 { format!("{}m ago", age / 60) }
-        else if age < 86400 { format!("{}h ago", age / 3600) }
-        else { format!("{}d ago", age / 86400) };
+    let age_str = if age < 60 {
+        format!("{}s ago", age)
+    } else if age < 3600 {
+        format!("{}m ago", age / 60)
+    } else if age < 86400 {
+        format!("{}h ago", age / 3600)
+    } else {
+        format!("{}d ago", age / 86400)
+    };
     println!("Index version: {}", meta.version);
     println!("Files indexed: {}", meta.file_count);
     println!("Unique n-grams: {}", meta.ngram_count);
@@ -175,8 +189,8 @@ pub fn index_status(root: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::fs;
+    use tempfile::TempDir;
 
     #[test]
     fn test_build_index() {
@@ -185,7 +199,7 @@ mod tests {
         fs::write(dir.path().join("main.rs"), "fn main() { hello_world(); }").unwrap();
         let result = build_index(dir.path(), 10 * 1024 * 1024);
         assert!(result.is_ok());
-        let index_dir = dir.path().join(".rsgrep");
+        let index_dir = dir.path().join(".frg");
         assert!(index_dir.join("CURRENT").exists());
         let current = fs::read_to_string(index_dir.join("CURRENT")).unwrap();
         let gen_dir = index_dir.join("generations").join(current.trim());

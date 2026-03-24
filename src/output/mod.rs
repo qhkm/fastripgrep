@@ -7,19 +7,43 @@ pub fn format_match(m: &Match, use_color: bool) -> String {
         let before = &m.line_content[..m.match_start];
         let matched = &m.line_content[m.match_start..m.match_end];
         let after = &m.line_content[m.match_end..];
-        format!("{}{}{}:{}{}{}:{}{}{}{}{}{}",
-            color::MAGENTA, m.file_path, color::RESET,
-            color::GREEN, m.line_number, color::RESET,
-            before, color::RED, color::BOLD, matched, color::RESET, after)
+        format!(
+            "{}{}{}:{}{}{}:{}{}{}{}{}{}",
+            color::MAGENTA,
+            m.file_path,
+            color::RESET,
+            color::GREEN,
+            m.line_number,
+            color::RESET,
+            before,
+            color::RED,
+            color::BOLD,
+            matched,
+            color::RESET,
+            after
+        )
     } else {
         format!("{}:{}:{}", m.file_path, m.line_number, m.line_content)
     }
 }
 
-pub fn format_context_line(line_num: usize, content: &str, file_path: &str, use_color: bool) -> String {
+pub fn format_context_line(
+    line_num: usize,
+    content: &str,
+    file_path: &str,
+    use_color: bool,
+) -> String {
     if use_color {
-        format!("{}{}{}-{}{}{}-{}", color::MAGENTA, file_path, color::RESET,
-            color::GREEN, line_num, color::RESET, content)
+        format!(
+            "{}{}{}-{}{}{}-{}",
+            color::MAGENTA,
+            file_path,
+            color::RESET,
+            color::GREEN,
+            line_num,
+            color::RESET,
+            content
+        )
     } else {
         format!("{}-{}-{}", file_path, line_num, content)
     }
@@ -32,7 +56,8 @@ pub fn format_match_json(m: &Match) -> String {
         "content": m.line_content,
         "match_start": m.match_start,
         "match_end": m.match_end,
-    }).to_string()
+    })
+    .to_string()
 }
 
 pub fn format_count(file_path: &str, count: usize, use_color: bool) -> String {
@@ -117,12 +142,33 @@ mod tests {
     #[test]
     fn test_unique_files() {
         let matches = vec![
-            Match { file_path: "a.rs".into(), line_number: 1, line_content: "x".into(),
-                match_start: 0, match_end: 1, context_before: vec![], context_after: vec![] },
-            Match { file_path: "a.rs".into(), line_number: 2, line_content: "y".into(),
-                match_start: 0, match_end: 1, context_before: vec![], context_after: vec![] },
-            Match { file_path: "b.rs".into(), line_number: 1, line_content: "z".into(),
-                match_start: 0, match_end: 1, context_before: vec![], context_after: vec![] },
+            Match {
+                file_path: "a.rs".into(),
+                line_number: 1,
+                line_content: "x".into(),
+                match_start: 0,
+                match_end: 1,
+                context_before: vec![],
+                context_after: vec![],
+            },
+            Match {
+                file_path: "a.rs".into(),
+                line_number: 2,
+                line_content: "y".into(),
+                match_start: 0,
+                match_end: 1,
+                context_before: vec![],
+                context_after: vec![],
+            },
+            Match {
+                file_path: "b.rs".into(),
+                line_number: 1,
+                line_content: "z".into(),
+                match_start: 0,
+                match_end: 1,
+                context_before: vec![],
+                context_after: vec![],
+            },
         ];
         assert_eq!(unique_files(&matches), vec!["a.rs", "b.rs"]);
     }

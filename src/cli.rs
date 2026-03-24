@@ -7,14 +7,14 @@ use crate::index;
 use crate::output;
 use crate::search::{self, SearchOptions};
 
-/// Load config file args from `~/.rsgreprc` or `$RSGREP_CONFIG_PATH`.
+/// Load config file args from `~/.frgrc` or `$FRG_CONFIG_PATH`.
 /// Each line is one argument (like ripgrep's config format).
 /// Lines starting with `#` are comments. Empty lines are ignored.
 fn load_config_args() -> Vec<String> {
-    let config_path = std::env::var("RSGREP_CONFIG_PATH")
+    let config_path = std::env::var("FRG_CONFIG_PATH")
         .map(PathBuf::from)
         .ok()
-        .or_else(|| dirs_next().map(|home| home.join(".rsgreprc")));
+        .or_else(|| dirs_next().map(|home| home.join(".frgrc")));
 
     let path = match config_path {
         Some(p) if p.exists() => p,
@@ -38,7 +38,7 @@ fn dirs_next() -> Option<PathBuf> {
 
 #[derive(Parser)]
 #[command(
-    name = "rsgrep",
+    name = "frg",
     version,
     about = "Fast regex search with sparse n-gram indexing"
 )]
@@ -256,7 +256,7 @@ pub fn run() -> Result<()> {
     };
 
     if let Err(e) = result {
-        eprintln!("rsgrep: {}", e);
+        eprintln!("frg: {}", e);
         process::exit(2);
     }
     Ok(())

@@ -85,9 +85,7 @@ fn widest_from(weights: &[u32], left: usize) -> usize {
             max_inside = max_inside.max(weights[right - 1]);
         }
 
-        if right <= left + 1
-            || (weights[left] > max_inside && weights[right] > max_inside)
-        {
+        if right <= left + 1 || (weights[left] > max_inside && weights[right] > max_inside) {
             best = right;
         }
     }
@@ -120,7 +118,8 @@ pub fn build_covering(content: &[u8]) -> Vec<NgramSpan> {
         while frontier <= next_uncovered && frontier < weights.len() {
             let right = widest_from(&weights, frontier);
             let candidate_end = right + 2;
-            if !found || candidate_end > best_right_end
+            if !found
+                || candidate_end > best_right_end
                 || (candidate_end == best_right_end && frontier < best_left)
             {
                 best_left = frontier;
@@ -147,7 +146,11 @@ pub fn build_covering(content: &[u8]) -> Vec<NgramSpan> {
 /// Never returns 0 (reserved for empty lookup table slots).
 pub fn hash_ngram(bytes: &[u8]) -> u64 {
     let h = xxhash_rust::xxh3::xxh3_64(bytes);
-    if h == 0 { 1 } else { h }
+    if h == 0 {
+        1
+    } else {
+        h
+    }
 }
 
 #[cfg(test)]
@@ -220,7 +223,10 @@ mod tests {
         }
         // With all-equal weights, only 2-byte and 3-byte spans are valid
         for (start, end) in &out {
-            assert!(end - start <= 3, "equal weights should not produce spans > 3 bytes");
+            assert!(
+                end - start <= 3,
+                "equal weights should not produce spans > 3 bytes"
+            );
         }
     }
 
@@ -250,8 +256,11 @@ mod tests {
         let all = build_all(content);
         let covering = build_covering(content);
         for span in &covering {
-            assert!(all.contains(span),
-                "covering span {:?} not in build_all", span);
+            assert!(
+                all.contains(span),
+                "covering span {:?} not in build_all",
+                span
+            );
         }
     }
 

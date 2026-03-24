@@ -1,6 +1,6 @@
+use crate::index::ngram::{build_covering, hash_ngram};
 use regex_syntax::hir::{Hir, HirKind};
 use regex_syntax::Parser;
-use crate::index::ngram::{build_covering, hash_ngram};
 
 #[derive(Debug)]
 pub enum QueryPlan {
@@ -21,9 +21,7 @@ pub fn build_query_plan(pattern: &str) -> QueryPlan {
 
 fn plan_from_hir(hir: &Hir) -> QueryPlan {
     match hir.kind() {
-        HirKind::Literal(lit) => {
-            literal_to_plan(&lit.0)
-        }
+        HirKind::Literal(lit) => literal_to_plan(&lit.0),
         HirKind::Concat(subs) => {
             // Merge adjacent literals, then AND the results
             let mut plans = Vec::new();
@@ -85,9 +83,7 @@ fn plan_from_hir(hir: &Hir) -> QueryPlan {
                 QueryPlan::ScanAll
             }
         }
-        HirKind::Capture(cap) => {
-            plan_from_hir(&cap.sub)
-        }
+        HirKind::Capture(cap) => plan_from_hir(&cap.sub),
         _ => QueryPlan::ScanAll,
     }
 }
@@ -97,7 +93,8 @@ fn literal_to_plan(bytes: &[u8]) -> QueryPlan {
         return QueryPlan::ScanAll;
     }
     let covering = build_covering(bytes);
-    let lookups: Vec<QueryPlan> = covering.iter()
+    let lookups: Vec<QueryPlan> = covering
+        .iter()
         .map(|&(s, e)| QueryPlan::Lookup(hash_ngram(&bytes[s..e])))
         .collect();
     if lookups.is_empty() {
@@ -131,16 +128,21 @@ mod tests {
     fn test_plan_alternation_produces_or() {
         let plan = build_query_plan("foo|bar");
         // Should produce Or plan, NOT ScanAll
-        assert!(matches!(plan, QueryPlan::Or(_)),
-            "alternation should produce Or plan, got {:?}", plan);
+        assert!(
+            matches!(plan, QueryPlan::Or(_)),
+            "alternation should produce Or plan, got {:?}",
+            plan
+        );
     }
 
     #[test]
     fn test_plan_concat_with_wildcard() {
         // "foo.*bar" should extract "foo" AND "bar"
         let plan = build_query_plan("foo.*bar");
-        assert!(!matches!(plan, QueryPlan::ScanAll),
-            "foo.*bar should extract literals");
+        assert!(
+            !matches!(plan, QueryPlan::ScanAll),
+            "foo.*bar should extract literals"
+        );
     }
 
     #[test]
@@ -160,14 +162,18 @@ mod tests {
     fn test_plan_alternation_with_short_branch() {
         // "a|foo" - branch "a" is < 2 bytes, so ScanAll propagates
         let plan = build_query_plan("a|foo");
-        assert!(matches!(plan, QueryPlan::ScanAll),
-            "alternation with 1-byte branch should be ScanAll");
+        assert!(
+            matches!(plan, QueryPlan::ScanAll),
+            "alternation with 1-byte branch should be ScanAll"
+        );
     }
 
     #[test]
     fn test_plan_two_byte_literal() {
         let plan = build_query_plan("ab");
-        assert!(!matches!(plan, QueryPlan::ScanAll),
-            "two-byte literal should produce a Lookup");
+        assert!(
+            !matches!(plan, QueryPlan::ScanAll),
+            "two-byte literal should produce a Lookup"
+        );
     }
 }

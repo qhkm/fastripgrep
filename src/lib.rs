@@ -1,5 +1,5 @@
 pub mod cli;
-pub mod index;
-pub mod search;
-pub mod output;
 pub mod ignore;
+pub mod index;
+pub mod output;
+pub mod search;

@@ -95,9 +95,21 @@ mod tests {
     #[test]
     fn test_lookup_build_and_query() {
         let entries = vec![
-            LookupEntry { hash: 100, offset: 0, length: 50 },
-            LookupEntry { hash: 200, offset: 50, length: 30 },
-            LookupEntry { hash: 300, offset: 80, length: 20 },
+            LookupEntry {
+                hash: 100,
+                offset: 0,
+                length: 50,
+            },
+            LookupEntry {
+                hash: 200,
+                offset: 50,
+                length: 30,
+            },
+            LookupEntry {
+                hash: 300,
+                offset: 80,
+                length: 20,
+            },
         ];
         let mut file = NamedTempFile::new().unwrap();
         write_lookup_table(&entries, file.as_file_mut()).unwrap();
@@ -119,7 +131,15 @@ mod tests {
     #[test]
     fn test_lookup_hash_zero_returns_none() {
         let mut file = NamedTempFile::new().unwrap();
-        write_lookup_table(&[LookupEntry { hash: 1, offset: 0, length: 10 }], file.as_file_mut()).unwrap();
+        write_lookup_table(
+            &[LookupEntry {
+                hash: 1,
+                offset: 0,
+                length: 10,
+            }],
+            file.as_file_mut(),
+        )
+        .unwrap();
         let table = MmapLookupTable::open(file.path()).unwrap();
         assert_eq!(table.lookup(0), None);
     }

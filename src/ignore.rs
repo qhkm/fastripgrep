@@ -8,13 +8,13 @@ pub fn is_binary(content: &[u8]) -> bool {
     content[..check_len].contains(&0)
 }
 
-/// Walk a directory collecting file paths. Respects .gitignore and .rsgrep-ignore.
+/// Walk a directory collecting file paths. Respects .gitignore and .frgignore.
 /// Skips files over max_filesize. Does NOT check binary here — caller should
 /// check after reading content to avoid double-reading files.
 pub fn walk_files(root: &Path, max_filesize: u64) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     let walker = WalkBuilder::new(root)
-        .add_custom_ignore_filename(".rsgrep-ignore")
+        .add_custom_ignore_filename(".frgignore")
         .follow_links(false)
         .require_git(false)
         .build();

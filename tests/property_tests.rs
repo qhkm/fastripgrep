@@ -1,7 +1,13 @@
 use proptest::prelude::*;
-use rsgrep::index::ngram::{build_all, build_covering};
+use proptest::test_runner::Config as ProptestConfig;
+use fastripgrep::index::ngram::{build_all, build_covering};
 
 proptest! {
+    #![proptest_config(ProptestConfig {
+        failure_persistence: None,
+        .. ProptestConfig::default()
+    })]
+
     #[test]
     fn covering_subset_of_all(content in prop::collection::vec(any::<u8>(), 2..100)) {
         let all = build_all(&content);

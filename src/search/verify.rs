@@ -19,7 +19,12 @@ fn multiline_regex(re: &Regex) -> Option<Regex> {
     Regex::new(&pattern).ok()
 }
 
-pub fn verify_file(path: &Path, re: &Regex, max_count: Option<usize>, context: usize) -> Vec<Match> {
+pub fn verify_file(
+    path: &Path,
+    re: &Regex,
+    max_count: Option<usize>,
+    context: usize,
+) -> Vec<Match> {
     let content = match std::fs::read(path) {
         Ok(c) => c,
         Err(_) => return Vec::new(),
@@ -80,8 +85,8 @@ pub fn verify_file(path: &Path, re: &Regex, max_count: Option<usize>, context: u
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::fs;
+    use tempfile::TempDir;
 
     #[test]
     fn test_verify_file_match() {

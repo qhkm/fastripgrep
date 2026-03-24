@@ -214,7 +214,7 @@ pub fn search_streaming<W: Write>(
             match kind {
                 PatternKind::MatchAll => {
                     let lines: Vec<&[u8]> = content.split(|&b| b == b'\n').collect();
-                    let n = if lines.last().map_or(false, |l| l.is_empty()) {
+                    let n = if lines.last().is_some_and(|l| l.is_empty()) {
                         lines.len() - 1
                     } else {
                         lines.len()
@@ -226,7 +226,7 @@ pub fn search_streaming<W: Write>(
                         count += 1;
                         if !suppress_output {
                             if use_color {
-                                let _ = write!(buf, "\x1b[35m{}\x1b[0m:\x1b[32m{}\x1b[0m:{}\n",
+                                let _ = writeln!(buf, "\x1b[35m{}\x1b[0m:\x1b[32m{}\x1b[0m:{}",
                                     file_str, idx + 1, String::from_utf8_lossy(line));
                             } else {
                                 // Write raw bytes directly — avoid from_utf8_lossy for ASCII
@@ -246,7 +246,7 @@ pub fn search_streaming<W: Write>(
                             count += 1;
                             if !suppress_output {
                                 if use_color {
-                                    let _ = write!(buf, "\x1b[35m{}\x1b[0m:\x1b[32m{}\x1b[0m:{}\n",
+                                    let _ = writeln!(buf, "\x1b[35m{}\x1b[0m:\x1b[32m{}\x1b[0m:{}",
                                         file_str, idx + 1, String::from_utf8_lossy(line));
                                 } else {
                                     let _ = write!(buf, "{}:{}:", file_str, idx + 1);
