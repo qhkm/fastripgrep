@@ -5,6 +5,7 @@ pub mod ngram;
 pub mod postings;
 
 use anyhow::Result;
+use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -28,10 +29,15 @@ pub fn build_index(root: &Path, max_filesize: u64) -> Result<()> {
     use fs4::fs_std::FileExt;
     lock_file.lock_exclusive()?;
 
+    // Phase 1: Walk directory
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(ProgressStyle::with_template("{spinner:.cyan} {msg}").unwrap());
+    pb.set_message("Scanning files...");
+    pb.enable_steady_tick(std::time::Duration::from_millis(80));
     let files = walk_files(root, max_filesize)?;
+    pb.finish_and_clear();
 
-    // Read files in parallel, filter out binary, extract n-grams in one pass.
-    // This avoids adding binary files to the file table entirely.
+    // Phase 2: Read files, filter binary, extract n-grams in parallel
     struct FileData {
         relative: std::path::PathBuf,
         mtime: u64,
@@ -39,33 +45,41 @@ pub fn build_index(root: &Path, max_filesize: u64) -> Result<()> {
         ngrams: Vec<Vec<u8>>,
     }
 
+    let pb = ProgressBar::new(files.len() as u64);
+    pb.set_style(ProgressStyle::with_template(
+        "{spinner:.cyan} Indexing [{bar:30.cyan/dim}] {pos}/{len} files ({per_sec})"
+    ).unwrap().progress_chars("=> "));
+
     let file_data: Vec<FileData> = files
         .par_iter()
         .filter_map(|path| {
-            let content = fs::read(path).ok()?;
-            // Skip binary files — they never enter the file table
-            if crate::ignore::is_binary(&content) {
-                return None;
-            }
-            let metadata = fs::metadata(path).ok()?;
-            let mtime = metadata
-                .modified()
-                .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            let relative = path.strip_prefix(root).unwrap_or(path).to_path_buf();
-            // O(n * MAX_NGRAM_LEN) per file
-            let spans = build_all(&content);
-            let ngrams: Vec<Vec<u8>> = spans.iter().map(|&(s, e)| content[s..e].to_vec()).collect();
-            Some(FileData {
-                relative,
-                mtime,
-                size: metadata.len(),
-                ngrams,
-            })
+            let result = (|| {
+                let content = fs::read(path).ok()?;
+                if crate::ignore::is_binary(&content) {
+                    return None;
+                }
+                let metadata = fs::metadata(path).ok()?;
+                let mtime = metadata
+                    .modified()
+                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let relative = path.strip_prefix(root).unwrap_or(path).to_path_buf();
+                let spans = build_all(&content);
+                let ngrams: Vec<Vec<u8>> = spans.iter().map(|&(s, e)| content[s..e].to_vec()).collect();
+                Some(FileData {
+                    relative,
+                    mtime,
+                    size: metadata.len(),
+                    ngrams,
+                })
+            })();
+            pb.inc(1);
+            result
         })
         .collect();
+    pb.finish_and_clear();
 
     // Build file table and collect n-grams (sequential — assigns IDs)
     let mut file_table = FileTableBuilder::new();
@@ -75,7 +89,11 @@ pub fn build_index(root: &Path, max_filesize: u64) -> Result<()> {
         per_file_ngrams.push((id, &fd.ngrams));
     }
 
-    // Build inverted index
+    // Phase 3: Build inverted index
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(ProgressStyle::with_template("{spinner:.cyan} {msg}").unwrap());
+    pb.set_message("Building inverted index...");
+    pb.enable_steady_tick(std::time::Duration::from_millis(80));
     let mut inverted: HashMap<u64, Vec<u32>> = HashMap::new();
     for (file_id, ngrams) in &per_file_ngrams {
         let mut seen = std::collections::HashSet::new();
@@ -90,6 +108,14 @@ pub fn build_index(root: &Path, max_filesize: u64) -> Result<()> {
         list.sort_unstable();
         list.dedup();
     }
+
+    pb.finish_and_clear();
+
+    // Phase 4: Write index
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(ProgressStyle::with_template("{spinner:.cyan} {msg}").unwrap());
+    pb.set_message("Writing index...");
+    pb.enable_steady_tick(std::time::Duration::from_millis(80));
 
     // Encode postings + build lookup
     let mut postings_data = Vec::new();
@@ -133,6 +159,7 @@ pub fn build_index(root: &Path, max_filesize: u64) -> Result<()> {
     let tmp = index_dir.join("CURRENT.tmp");
     fs::write(&tmp, &gen_id)?;
     fs::rename(&tmp, index_dir.join("CURRENT"))?;
+    pb.finish_and_clear();
 
     // Release lock (dropped automatically, but explicit)
     lock_file.unlock()?;
