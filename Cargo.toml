@@ -1,0 +1,29 @@
+[package]
+name = "rsgrep"
+version = "0.1.0"
+edition = "2021"
+description = "Fast regex search with sparse n-gram indexing"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+regex = "1"
+regex-syntax = "0.8"
+memmap2 = "0.9"
+rayon = "1"
+ignore = "0.4"
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+is-terminal = "0.4"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+glob = "0.3"
+fs4 = "0.9"
+
+[dev-dependencies]
+tempfile = "3"
+proptest = "1"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "bench"
+harness = false
