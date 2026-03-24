@@ -250,8 +250,8 @@ cargo clippy        # Zero warnings
 - [x] Multi-pattern search — `frg search "pat1" -e "pat2" -e "pat3"`
 
 **Adoption:**
-- [ ] `frg watch` — auto-update index on file changes (fsnotify), no manual `frg update` needed
-- [ ] Homebrew formula — `brew install fastripgrep`
+- [x] ~~`frg watch`~~ — auto-updates index on file changes with debouncing
+- [x] ~~Homebrew formula~~ — `brew tap qhkm/tap && brew install frg`
 
 **Editor integrations:**
 - [ ] VS Code extension — use frg as search backend
