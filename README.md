@@ -242,7 +242,7 @@ cargo clippy        # Zero warnings
 ## Roadmap
 
 **High impact:**
-- [ ] Incremental index updates — `frg update` currently does a full rebuild (~23s). The storage layout already supports generations; next step is overlay + tombstones so only changed/new/deleted files are re-indexed
+- [x] ~~Incremental index updates~~ — **Done.** `frg update` now detects changed/new/deleted files and writes only an overlay (~70ms vs 21s full rebuild). Search merges base + overlay transparently
 
 **Medium impact:**
 - [ ] Corpus-derived weight table — current weights are a deterministic hash placeholder. Real inverse-frequency weights from open-source code would improve n-gram selectivity (fewer false positive candidates)
