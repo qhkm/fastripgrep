@@ -57,6 +57,9 @@ enum Commands {
         force: bool,
         #[arg(long, default_value = "10485760")]
         max_filesize: u64,
+        /// Follow symbolic links
+        #[arg(long)]
+        follow: bool,
     },
     /// Search using the index
     Search {
@@ -88,6 +91,9 @@ enum Commands {
         glob: Option<String>,
         #[arg(long = "type")]
         file_type: Option<String>,
+        /// Follow symbolic links
+        #[arg(long)]
+        follow: bool,
     },
     /// Update the index incrementally
     Update {
@@ -122,10 +128,11 @@ pub fn run() -> Result<()> {
             path,
             max_filesize,
             force: _,
+            follow,
         } => {
             let root = std::fs::canonicalize(&path)?;
             eprintln!("Indexing {}...", root.display());
-            index::build_index(&root, max_filesize)?;
+            index::build_index_follow(&root, max_filesize, follow)?;
             let gen = index::current_generation(&root)?;
             let meta = index::meta::IndexMeta::read(&gen.join("meta.json"))?;
             eprintln!(
@@ -149,6 +156,7 @@ pub fn run() -> Result<()> {
             json,
             glob,
             file_type,
+            follow,
         } => {
             let root = std::fs::canonicalize(&path)?;
 
@@ -168,6 +176,7 @@ pub fn run() -> Result<()> {
                 glob_pattern: glob,
                 file_type,
                 json,
+                follow,
             };
 
             let use_color = output::color::should_color();

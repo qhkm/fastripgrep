@@ -20,6 +20,10 @@ use ngram::{build_all, hash_ngram};
 use postings::encode_posting_list;
 
 pub fn build_index(root: &Path, max_filesize: u64) -> Result<()> {
+    build_index_follow(root, max_filesize, false)
+}
+
+pub fn build_index_follow(root: &Path, max_filesize: u64, follow_links: bool) -> Result<()> {
     let index_dir = root.join(".frg");
     fs::create_dir_all(&index_dir)?;
 
@@ -34,7 +38,7 @@ pub fn build_index(root: &Path, max_filesize: u64) -> Result<()> {
     pb.set_style(ProgressStyle::with_template("{spinner:.cyan} {msg}").unwrap());
     pb.set_message("Scanning files...");
     pb.enable_steady_tick(std::time::Duration::from_millis(80));
-    let files = walk_files(root, max_filesize)?;
+    let files = walk_files(root, max_filesize, follow_links)?;
     pb.finish_and_clear();
 
     // Phase 2: Read files, filter binary, extract n-grams in parallel
@@ -202,10 +206,14 @@ pub fn is_tombstoned(tombstones: &[u32], id: u32) -> bool {
 }
 
 pub fn update_index(root: &Path, max_filesize: u64) -> Result<()> {
+    update_index_follow(root, max_filesize, false)
+}
+
+pub fn update_index_follow(root: &Path, max_filesize: u64, follow_links: bool) -> Result<()> {
     // Check if a base generation exists; if not, fall back to full build
     let gen_dir = match current_generation(root) {
         Ok(dir) if dir.join("meta.json").exists() => dir,
-        _ => return build_index(root, max_filesize),
+        _ => return build_index_follow(root, max_filesize, follow_links),
     };
 
     let index_dir = root.join(".frg");
@@ -233,7 +241,7 @@ pub fn update_index(root: &Path, max_filesize: u64) -> Result<()> {
     pb.set_style(ProgressStyle::with_template("{spinner:.cyan} {msg}").unwrap());
     pb.set_message("Scanning files...");
     pb.enable_steady_tick(std::time::Duration::from_millis(80));
-    let current_files = walk_files(root, max_filesize)?;
+    let current_files = walk_files(root, max_filesize, follow_links)?;
     pb.finish_and_clear();
 
     // Build set of current relative paths

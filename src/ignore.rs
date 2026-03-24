@@ -11,11 +11,11 @@ pub fn is_binary(content: &[u8]) -> bool {
 /// Walk a directory collecting file paths. Respects .gitignore and .frgignore.
 /// Skips files over max_filesize. Does NOT check binary here — caller should
 /// check after reading content to avoid double-reading files.
-pub fn walk_files(root: &Path, max_filesize: u64) -> Result<Vec<PathBuf>> {
+pub fn walk_files(root: &Path, max_filesize: u64, follow_links: bool) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     let walker = WalkBuilder::new(root)
         .add_custom_ignore_filename(".frgignore")
-        .follow_links(false)
+        .follow_links(follow_links)
         .require_git(false)
         .build();
 
@@ -54,7 +54,7 @@ mod tests {
         fs::write(dir.path().join("keep.rs"), "code").unwrap();
         fs::write(dir.path().join("skip.log"), "log").unwrap();
         fs::write(dir.path().join(".gitignore"), "*.log\n").unwrap();
-        let files = walk_files(dir.path(), 10 * 1024 * 1024).unwrap();
+        let files = walk_files(dir.path(), 10 * 1024 * 1024, false).unwrap();
         let names: Vec<_> = files
             .iter()
             .map(|p| p.file_name().unwrap().to_str().unwrap())
@@ -70,7 +70,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         fs::write(dir.path().join("code.rs"), "fn main() {}").unwrap();
         fs::write(dir.path().join("bin.dat"), b"\x00\x01\x02\x03").unwrap();
-        let files = walk_files(dir.path(), 10 * 1024 * 1024).unwrap();
+        let files = walk_files(dir.path(), 10 * 1024 * 1024, false).unwrap();
         let names: Vec<_> = files
             .iter()
             .map(|p| p.file_name().unwrap().to_str().unwrap())

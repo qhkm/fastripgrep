@@ -26,6 +26,7 @@ pub struct SearchOptions {
     pub glob_pattern: Option<String>,
     pub file_type: Option<String>,
     pub json: bool,
+    pub follow: bool,
 }
 
 /// Resolve a file ID to a path, considering both base and overlay file tables.
@@ -156,7 +157,7 @@ pub fn brute_force_search(
     re: &regex::bytes::Regex,
     opts: &SearchOptions,
 ) -> Result<Vec<Match>> {
-    let files = crate::ignore::walk_files(root, 10 * 1024 * 1024)?;
+    let files = crate::ignore::walk_files(root, 10 * 1024 * 1024, opts.follow)?;
     let mut all = Vec::new();
     for path in &files {
         if !matches_filters(path, opts) {
@@ -231,7 +232,7 @@ pub fn search_streaming<W: Write>(
 
     // Get file list
     let file_paths: Vec<std::path::PathBuf> = if opts.no_index {
-        crate::ignore::walk_files(root, 10 * 1024 * 1024)?
+        crate::ignore::walk_files(root, 10 * 1024 * 1024, opts.follow)?
     } else {
         let gen_dir = current_generation(root)?;
         let meta = IndexMeta::read(&gen_dir.join("meta.json"))?;
