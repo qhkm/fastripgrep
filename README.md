@@ -255,7 +255,18 @@ You have access to `frg` (fastripgrep), a fast indexed grep.
 
 ### Skills
 
-Copy `skills/frg.md` into your agent's skills directory — it covers search, replace, and index management in one file.
+A single drop-in skill file (`skills/frg.md`) teaches any agent to use frg for search, replace, and index management.
+
+**Claude Code:**
+```bash
+# Copy to your project's skills directory
+mkdir -p .claude/skills && cp skills/frg.md .claude/skills/
+
+# Or install globally for all projects
+mkdir -p ~/.claude/skills && cp skills/frg.md ~/.claude/skills/
+```
+
+**Other agents:** Copy `skills/frg.md` into wherever your agent reads skill/tool definitions.
 
 ## Exit Codes
 
