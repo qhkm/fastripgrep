@@ -52,6 +52,10 @@ pub fn build_index(root: &Path, max_filesize: u64) -> Result<()> {
         .par_iter()
         .filter_map(|(id, path)| {
             let content = fs::read(path).ok()?;
+            // Skip binary files (null byte in first 8KB)
+            if crate::ignore::is_binary(&content) {
+                return None;
+            }
             // Always use build_all to guarantee recall. build_all is
             // O(n * MAX_NGRAM_LEN) per file thanks to the 64-byte cap
             // on inner loop length, so it is fast even for large files.

@@ -25,6 +25,11 @@ pub fn verify_file(path: &Path, re: &Regex, max_count: Option<usize>, context: u
         Err(_) => return Vec::new(),
     };
 
+    // Skip binary files
+    if crate::ignore::is_binary(&content) {
+        return Vec::new();
+    }
+
     let file_path = path.to_string_lossy().into_owned();
 
     // Early bail: check whole file for any match before splitting into lines.
