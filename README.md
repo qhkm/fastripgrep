@@ -243,12 +243,15 @@ cargo clippy        # Zero warnings
 
 **Done:**
 - [x] Incremental index updates — overlay/tombstone architecture (~70ms vs 21s full rebuild)
+- [x] Shell completions — `frg completions bash|zsh|fish|powershell|elvish`
+- [x] Man page — `frg man | man -l -`
+- [x] `--follow` flag — user-controllable symlink following
+- [x] `frg init` — auto-detect project type, create `.frgignore`, optional git hook
+- [x] Multi-pattern search — `frg search "pat1" -e "pat2" -e "pat3"`
 
 **Adoption:**
 - [ ] `frg watch` — auto-update index on file changes (fsnotify), no manual `frg update` needed
 - [ ] Homebrew formula — `brew install fastripgrep`
-- [ ] Shell completions — bash, zsh, fish (via clap_complete)
-- [ ] Man page generation
 
 **Editor integrations:**
 - [ ] VS Code extension — use frg as search backend
@@ -259,9 +262,6 @@ cargo clippy        # Zero warnings
 - [ ] Monotone-stack n-gram extraction — remove the 64-byte cap while staying O(n)
 
 **Features:**
-- [ ] `--follow` flag — user-controllable symlink following
-- [ ] `frg init` — auto-detect project type, suggest `.frgignore`, optional git hook for auto-indexing
-- [ ] Multi-pattern search — `frg search -e "pat1" -e "pat2"` (like grep -e)
 - [ ] `--replace` / `frg replace` — search and replace with preview
 
 ## License
