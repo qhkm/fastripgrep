@@ -255,12 +255,7 @@ You have access to `frg` (fastripgrep), a fast indexed grep.
 
 ### Skills
 
-The `skills/` directory contains drop-in skill files:
-
-- `skills/frg-search.md` — search commands and patterns
-- `skills/frg-replace.md` — search & replace with preview
-
-Copy these into your agent's skills directory to make frg a first-class tool.
+Copy `skills/frg.md` into your agent's skills directory — it covers search, replace, and index management in one file.
 
 ## Exit Codes
 
