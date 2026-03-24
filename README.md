@@ -210,6 +210,58 @@ Match counts are identical to ripgrep (case-sensitive mode) across all tested pa
 
 **Key dependencies:** `regex` + `regex-syntax` (matching), `memmap2` (mmap), `rayon` (parallelism), `memchr` (SIMD byte search), `ignore` (gitignore), `xxhash-rust` (stable hashing), `clap` (CLI)
 
+## Using frg with AI Coding Agents
+
+frg ships with skill files and a `CLAUDE.md` that coding agents can pick up automatically.
+
+### Claude Code
+
+Copy the `CLAUDE.md` into your project root — Claude Code reads it automatically:
+
+```bash
+cp /path/to/fastripgrep/CLAUDE.md .claude/CLAUDE.md
+# or just add frg instructions to your existing CLAUDE.md
+```
+
+Or add to your global `~/.claude/CLAUDE.md`:
+
+```markdown
+## Search Strategy
+For codebase searches, use `frg search` instead of grep/rg when a `.frg/` index exists.
+Run `frg index .` first if `.frg/` doesn't exist.
+```
+
+### Cursor / Windsurf / Other Agents
+
+Add to your project rules (`.cursor/rules`, `.windsurfrules`, etc.):
+
+```
+For code search, use `frg search "pattern" .` instead of grep or ripgrep.
+If .frg/ directory doesn't exist, run `frg index .` first.
+For search and replace, use `frg replace "old" "new" .` (preview) then `frg replace "old" "new" . --write`.
+```
+
+### Codex / Custom Agents
+
+Add to your system prompt or agent instructions:
+
+```
+You have access to `frg` (fastripgrep), a fast indexed grep.
+- Before searching: run `frg index .` if .frg/ doesn't exist
+- Search: `frg search "pattern" .`
+- Replace: `frg replace "old" "new" .` then `--write` to apply
+- Update index: `frg update .` after file changes
+```
+
+### Skills
+
+The `skills/` directory contains drop-in skill files:
+
+- `skills/frg-search.md` — search commands and patterns
+- `skills/frg-replace.md` — search & replace with preview
+
+Copy these into your agent's skills directory to make frg a first-class tool.
+
 ## Exit Codes
 
 | Code | Meaning |
