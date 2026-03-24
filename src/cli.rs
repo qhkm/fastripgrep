@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::process;
 
 use crate::index;
-use crate::search::{self, SearchOptions};
 use crate::output;
+use crate::search::{self, SearchOptions};
 
 /// Load config file args from `~/.rsgreprc` or `$RSGREP_CONFIG_PATH`.
 /// Each line is one argument (like ripgrep's config format).
@@ -14,9 +14,7 @@ fn load_config_args() -> Vec<String> {
     let config_path = std::env::var("RSGREP_CONFIG_PATH")
         .map(PathBuf::from)
         .ok()
-        .or_else(|| {
-            dirs_next().map(|home| home.join(".rsgreprc"))
-        });
+        .or_else(|| dirs_next().map(|home| home.join(".rsgreprc")));
 
     let path = match config_path {
         Some(p) if p.exists() => p,
@@ -39,7 +37,11 @@ fn dirs_next() -> Option<PathBuf> {
 }
 
 #[derive(Parser)]
-#[command(name = "rsgrep", version, about = "Fast regex search with sparse n-gram indexing")]
+#[command(
+    name = "rsgrep",
+    version,
+    about = "Fast regex search with sparse n-gram indexing"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -108,13 +110,20 @@ pub fn run() -> Result<()> {
     let cli = Cli::parse_from(all_args);
 
     let result = match cli.command {
-        Commands::Index { path, max_filesize, force: _ } => {
+        Commands::Index {
+            path,
+            max_filesize,
+            force: _,
+        } => {
             let root = std::fs::canonicalize(&path)?;
             eprintln!("Indexing {}...", root.display());
             index::build_index(&root, max_filesize)?;
             let gen = index::current_generation(&root)?;
             let meta = index::meta::IndexMeta::read(&gen.join("meta.json"))?;
-            eprintln!("Done. {} files, {} n-grams.", meta.file_count, meta.ngram_count);
+            eprintln!(
+                "Done. {} files, {} n-grams.",
+                meta.file_count, meta.ngram_count
+            );
             Ok(())
         }
         Commands::Search {
@@ -136,7 +145,8 @@ pub fn run() -> Result<()> {
             let root = std::fs::canonicalize(&path)?;
 
             // Smart case: if pattern is all lowercase and -i is not set, enable case-insensitive
-            let effective_ci = case_insensitive || (smart_case && !pattern.chars().any(|c| c.is_uppercase()));
+            let effective_ci =
+                case_insensitive || (smart_case && !pattern.chars().any(|c| c.is_uppercase()));
 
             let opts = SearchOptions {
                 case_insensitive: effective_ci,
@@ -152,48 +162,81 @@ pub fn run() -> Result<()> {
                 json,
             };
 
-            let matches = search::search(&root, &pattern, &opts)?;
-
-            if quiet {
-                process::exit(if matches.is_empty() { 1 } else { 0 });
-            }
-            if matches.is_empty() {
-                process::exit(1);
-            }
-
             let use_color = output::color::should_color();
 
-            // Use buffered stdout to avoid per-line flush overhead
+            // Use buffered stdout
             use std::io::Write;
             let stdout = std::io::stdout();
             let mut out = std::io::BufWriter::new(stdout.lock());
 
-            if files_only {
-                for f in &output::unique_files(&matches) {
-                    let _ = writeln!(out, "{}", f);
+            // Check if pattern qualifies for streaming fast path
+            let effective_pattern = if opts.literal {
+                regex::escape(&pattern)
+            } else {
+                pattern.clone()
+            };
+            let effective_pattern = if opts.case_insensitive {
+                format!("(?i){}", effective_pattern)
+            } else {
+                effective_pattern
+            };
+            let kind = search::classify_pattern(&effective_pattern);
+
+            if kind != search::PatternKind::Normal && context == 0 && !json {
+                // Streaming fast path: no collection, no Match structs
+                let n = search::search_streaming(&root, &pattern, &opts, &mut out, use_color)?;
+                if quiet {
+                    process::exit(if n == 0 { 1 } else { 0 });
                 }
-            } else if count {
-                let mut counts = std::collections::HashMap::new();
-                for m in &matches {
-                    *counts.entry(m.file_path.as_str()).or_insert(0usize) += 1;
-                }
-                let mut sorted: Vec<_> = counts.into_iter().collect();
-                sorted.sort_by_key(|(p, _)| p.to_string());
-                for (p, c) in sorted {
-                    let _ = writeln!(out, "{}", output::format_count(p, c, use_color));
-                }
-            } else if json {
-                for m in &matches {
-                    let _ = writeln!(out, "{}", output::format_match_json(m));
+                if n == 0 {
+                    process::exit(1);
                 }
             } else {
-                for m in &matches {
-                    for (ln, content) in &m.context_before {
-                        let _ = writeln!(out, "{}", output::format_context_line(*ln, content, &m.file_path, use_color));
+                // Standard path: collect matches, format output
+                let matches = search::search(&root, &pattern, &opts)?;
+
+                if quiet {
+                    process::exit(if matches.is_empty() { 1 } else { 0 });
+                }
+                if matches.is_empty() {
+                    process::exit(1);
+                }
+
+                if files_only {
+                    for f in &output::unique_files(&matches) {
+                        let _ = writeln!(out, "{}", f);
                     }
-                    let _ = writeln!(out, "{}", output::format_match(m, use_color));
-                    for (ln, content) in &m.context_after {
-                        let _ = writeln!(out, "{}", output::format_context_line(*ln, content, &m.file_path, use_color));
+                } else if count {
+                    let mut counts = std::collections::HashMap::new();
+                    for m in &matches {
+                        *counts.entry(m.file_path.as_str()).or_insert(0usize) += 1;
+                    }
+                    let mut sorted: Vec<_> = counts.into_iter().collect();
+                    sorted.sort_by_key(|(p, _)| p.to_string());
+                    for (p, c) in sorted {
+                        let _ = writeln!(out, "{}", output::format_count(p, c, use_color));
+                    }
+                } else if json {
+                    for m in &matches {
+                        let _ = writeln!(out, "{}", output::format_match_json(m));
+                    }
+                } else {
+                    for m in &matches {
+                        for (ln, content) in &m.context_before {
+                            let _ = writeln!(
+                                out,
+                                "{}",
+                                output::format_context_line(*ln, content, &m.file_path, use_color)
+                            );
+                        }
+                        let _ = writeln!(out, "{}", output::format_match(m, use_color));
+                        for (ln, content) in &m.context_after {
+                            let _ = writeln!(
+                                out,
+                                "{}",
+                                output::format_context_line(*ln, content, &m.file_path, use_color)
+                            );
+                        }
                     }
                 }
             }

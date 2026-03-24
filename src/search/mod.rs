@@ -2,15 +2,16 @@ pub mod decompose;
 pub mod intersect;
 pub mod verify;
 
-use anyhow::Result;
-use std::path::Path;
-use crate::index::{current_generation, meta::IndexMeta};
+use crate::index::filetable::FileTableReader;
 use crate::index::lookup::MmapLookupTable;
 use crate::index::postings::decode_posting_list;
-use crate::index::filetable::FileTableReader;
+use crate::index::{current_generation, meta::IndexMeta};
+use anyhow::Result;
 use decompose::{build_query_plan, QueryPlan};
 use intersect::{intersect_many, union_many};
-use verify::{Match, verify_file};
+use std::io::Write;
+use std::path::Path;
+use verify::{verify_file, Match};
 
 #[derive(Debug, Clone, Default)]
 pub struct SearchOptions {
@@ -49,7 +50,10 @@ pub fn search(root: &Path, pattern: &str, opts: &SearchOptions) -> Result<Vec<Ma
     let meta = IndexMeta::read(&gen_dir.join("meta.json"))?;
     let age = IndexMeta::timestamp_now().saturating_sub(meta.timestamp);
     if age > 86400 {
-        eprintln!("warning: index is {}h old, consider `rsgrep update`", age / 3600);
+        eprintln!(
+            "warning: index is {}h old, consider `rsgrep update`",
+            age / 3600
+        );
     }
 
     let lookup = MmapLookupTable::open(&gen_dir.join("lookup.bin"))?;
@@ -60,11 +64,16 @@ pub fn search(root: &Path, pattern: &str, opts: &SearchOptions) -> Result<Vec<Ma
     let candidates = execute_plan(&plan, &lookup, &postings_data, &file_table)?;
 
     // Collect candidate paths, filtering first
-    let candidate_paths: Vec<_> = candidates.iter()
+    let candidate_paths: Vec<_> = candidates
+        .iter()
         .filter_map(|fid| {
             let entry = file_table.get(*fid)?;
             let full_path = root.join(&entry.path);
-            if matches_filters(&full_path, opts) { Some(full_path) } else { None }
+            if matches_filters(&full_path, opts) {
+                Some(full_path)
+            } else {
+                None
+            }
         })
         .collect();
 
@@ -78,7 +87,11 @@ pub fn search(root: &Path, pattern: &str, opts: &SearchOptions) -> Result<Vec<Ma
     Ok(all_matches)
 }
 
-pub fn brute_force_search(root: &Path, re: &regex::bytes::Regex, opts: &SearchOptions) -> Result<Vec<Match>> {
+pub fn brute_force_search(
+    root: &Path,
+    re: &regex::bytes::Regex,
+    opts: &SearchOptions,
+) -> Result<Vec<Match>> {
     let files = crate::ignore::walk_files(root, 10 * 1024 * 1024)?;
     let mut all = Vec::new();
     for path in &files {
@@ -107,6 +120,154 @@ fn matches_filters(path: &Path, opts: &SearchOptions) -> bool {
     true
 }
 
+/// Classify a pattern for fast-path optimization.
+#[derive(Debug, PartialEq)]
+pub enum PatternKind {
+    /// Matches every line (e.g., "", ".*", ".+")
+    MatchAll,
+    /// Single byte literal — use memchr for SIMD search
+    SingleByte(u8),
+    /// Normal regex — use standard path
+    Normal,
+}
+
+pub fn classify_pattern(pattern: &str) -> PatternKind {
+    match pattern {
+        "" | ".*" | ".+" | "^.*$" | "^.+$" => PatternKind::MatchAll,
+        _ if pattern.len() == 1 && pattern.as_bytes()[0].is_ascii_graphic() => {
+            PatternKind::SingleByte(pattern.as_bytes()[0])
+        }
+        _ => PatternKind::Normal,
+    }
+}
+
+/// Streaming search: writes matches directly to a writer instead of collecting.
+/// Much faster for ScanAll patterns with millions of matches.
+pub fn search_streaming<W: Write>(
+    root: &Path,
+    pattern: &str,
+    opts: &SearchOptions,
+    writer: &mut W,
+    use_color: bool,
+) -> Result<u64> {
+    let effective = if opts.literal {
+        regex::escape(pattern)
+    } else {
+        pattern.to_string()
+    };
+    let effective = if opts.case_insensitive {
+        format!("(?i){}", effective)
+    } else {
+        effective
+    };
+
+    let kind = classify_pattern(&effective);
+
+    // Get file list
+    let file_paths = if opts.no_index {
+        crate::ignore::walk_files(root, 10 * 1024 * 1024)?
+    } else {
+        let gen_dir = current_generation(root)?;
+        let meta = IndexMeta::read(&gen_dir.join("meta.json"))?;
+        let age = IndexMeta::timestamp_now().saturating_sub(meta.timestamp);
+        if age > 86400 {
+            eprintln!("warning: index is {}h old, consider `rsgrep update`", age / 3600);
+        }
+
+        let lookup = MmapLookupTable::open(&gen_dir.join("lookup.bin"))?;
+        let postings_data = std::fs::read(gen_dir.join("postings.bin"))?;
+        let file_table = FileTableReader::open(&gen_dir.join("files.bin"))?;
+
+        let plan = build_query_plan(&effective);
+        let candidates = execute_plan(&plan, &lookup, &postings_data, &file_table)?;
+
+        candidates.iter()
+            .filter_map(|fid| {
+                let entry = file_table.get(*fid)?;
+                Some(root.join(&entry.path))
+            })
+            .collect()
+    };
+
+    let mut match_count: u64 = 0;
+
+    for path in &file_paths {
+        if !matches_filters(path, opts) {
+            continue;
+        }
+
+        let content = match std::fs::read(path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        if crate::ignore::is_binary(&content) {
+            continue;
+        }
+
+        let file_str = path.to_string_lossy();
+
+        match kind {
+            PatternKind::MatchAll => {
+                // Every line matches — skip regex entirely
+                let lines: Vec<&[u8]> = content.split(|&b| b == b'\n').collect();
+                let line_count = if lines.last().map_or(false, |l| l.is_empty()) {
+                    lines.len() - 1 // skip trailing empty line from final newline
+                } else {
+                    lines.len()
+                };
+                for (idx, line) in lines[..line_count].iter().enumerate() {
+                    if let Some(max) = opts.max_count {
+                        if match_count >= max as u64 { break; }
+                    }
+                    match_count += 1;
+                    if !opts.quiet && !opts.files_only && !opts.count {
+                        let line_str = String::from_utf8_lossy(line);
+                        if use_color {
+                            let _ = writeln!(writer, "\x1b[35m{}\x1b[0m:\x1b[32m{}\x1b[0m:{}",
+                                file_str, idx + 1, line_str);
+                        } else {
+                            let _ = writeln!(writer, "{}:{}:{}", file_str, idx + 1, line_str);
+                        }
+                    }
+                }
+            }
+            PatternKind::SingleByte(byte) => {
+                // Use memchr for SIMD-accelerated single-byte search
+                for (idx, line) in content.split(|&b| b == b'\n').enumerate() {
+                    if let Some(max) = opts.max_count {
+                        if match_count >= max as u64 { break; }
+                    }
+                    if memchr::memchr(byte, line).is_some() {
+                        match_count += 1;
+                        if !opts.quiet && !opts.files_only && !opts.count {
+                            let line_str = String::from_utf8_lossy(line);
+                            if use_color {
+                                let _ = writeln!(writer, "\x1b[35m{}\x1b[0m:\x1b[32m{}\x1b[0m:{}",
+                                    file_str, idx + 1, line_str);
+                            } else {
+                                let _ = writeln!(writer, "{}:{}:{}", file_str, idx + 1, line_str);
+                            }
+                        }
+                    }
+                }
+            }
+            PatternKind::Normal => {
+                // unreachable in this function — handled by caller
+                unreachable!()
+            }
+        }
+
+        if opts.files_only && match_count > 0 {
+            // Already have a match from this file
+            if !opts.quiet {
+                let _ = writeln!(writer, "{}", file_str);
+            }
+        }
+    }
+
+    Ok(match_count)
+}
+
 fn execute_plan(
     plan: &QueryPlan,
     lookup: &MmapLookupTable,
@@ -128,13 +289,15 @@ fn execute_plan(
             }
         }
         QueryPlan::And(subs) => {
-            let lists: Result<Vec<_>> = subs.iter()
+            let lists: Result<Vec<_>> = subs
+                .iter()
                 .map(|s| execute_plan(s, lookup, postings, ft))
                 .collect();
             Ok(intersect_many(&lists?))
         }
         QueryPlan::Or(subs) => {
-            let lists: Result<Vec<_>> = subs.iter()
+            let lists: Result<Vec<_>> = subs
+                .iter()
                 .map(|s| execute_plan(s, lookup, postings, ft))
                 .collect();
             Ok(union_many(&lists?))
@@ -146,14 +309,26 @@ fn execute_plan(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::fs;
+    use tempfile::TempDir;
 
     fn setup() -> TempDir {
         let dir = TempDir::new().unwrap();
-        fs::write(dir.path().join("hello.rs"), "fn hello_world() {\n    println!(\"hi\");\n}\n").unwrap();
-        fs::write(dir.path().join("main.rs"), "fn main() {\n    hello_world();\n}\n").unwrap();
-        fs::write(dir.path().join("other.rs"), "fn other() {\n    let x = 42;\n}\n").unwrap();
+        fs::write(
+            dir.path().join("hello.rs"),
+            "fn hello_world() {\n    println!(\"hi\");\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("main.rs"),
+            "fn main() {\n    hello_world();\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("other.rs"),
+            "fn other() {\n    let x = 42;\n}\n",
+        )
+        .unwrap();
         crate::index::build_index(dir.path(), 10 * 1024 * 1024).unwrap();
         dir
     }
@@ -183,13 +358,19 @@ mod tests {
     fn test_search_alternation() {
         let dir = setup();
         let r = search(dir.path(), "hello_world|other", &SearchOptions::default()).unwrap();
-        assert!(r.len() >= 3, "alternation should find matches from both branches");
+        assert!(
+            r.len() >= 3,
+            "alternation should find matches from both branches"
+        );
     }
 
     #[test]
     fn test_search_brute_force() {
         let dir = setup();
-        let opts = SearchOptions { no_index: true, ..Default::default() };
+        let opts = SearchOptions {
+            no_index: true,
+            ..Default::default()
+        };
         let r = search(dir.path(), "hello_world", &opts).unwrap();
         assert!(r.len() >= 2);
     }
@@ -197,7 +378,10 @@ mod tests {
     #[test]
     fn test_search_case_insensitive() {
         let dir = setup();
-        let opts = SearchOptions { case_insensitive: true, ..Default::default() };
+        let opts = SearchOptions {
+            case_insensitive: true,
+            ..Default::default()
+        };
         let r = search(dir.path(), "HELLO_WORLD", &opts).unwrap();
         assert!(!r.is_empty());
     }
@@ -207,7 +391,10 @@ mod tests {
         let dir = TempDir::new().unwrap();
         fs::write(dir.path().join("test.rs"), "let x = a.b();").unwrap();
         crate::index::build_index(dir.path(), 10 * 1024 * 1024).unwrap();
-        let opts = SearchOptions { literal: true, ..Default::default() };
+        let opts = SearchOptions {
+            literal: true,
+            ..Default::default()
+        };
         let r = search(dir.path(), "a.b()", &opts).unwrap();
         assert!(!r.is_empty());
     }
