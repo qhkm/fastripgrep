@@ -30,6 +30,7 @@ memchr = "2"
 indicatif = "0.17"
 clap_complete = "4"
 clap_mangen = "0.2"
+notify = "7"
 
 [dev-dependencies]
 tempfile = "3"

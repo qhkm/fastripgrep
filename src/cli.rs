@@ -119,6 +119,11 @@ enum Commands {
         #[arg(long)]
         hook: bool,
     },
+    /// Watch for file changes and auto-update the index
+    Watch {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
     /// Generate man page
     Man,
     /// Generate shell completions
@@ -311,6 +316,98 @@ pub fn run() -> Result<()> {
         Commands::Status { path } => {
             let root = std::fs::canonicalize(&path)?;
             index::index_status(&root)
+        }
+        Commands::Watch { path } => {
+            use notify::{RecursiveMode, Watcher};
+            use std::sync::mpsc;
+            use std::time::Duration;
+
+            let root = std::fs::canonicalize(&path)?;
+
+            // Ensure index exists
+            if index::current_generation(&root).is_err() {
+                eprintln!("No index found. Building...");
+                index::build_index(&root, 10 * 1024 * 1024)?;
+                let gen = index::current_generation(&root)?;
+                let meta = index::meta::IndexMeta::read(&gen.join("meta.json"))?;
+                eprintln!("Done. {} files indexed.", meta.file_count);
+            }
+
+            eprintln!(
+                "Watching {} for changes... (Ctrl+C to stop)",
+                root.display()
+            );
+
+            let (tx, rx) = mpsc::channel();
+
+            let mut watcher = notify::recommended_watcher(
+                move |res: Result<notify::Event, notify::Error>| {
+                    if let Ok(event) = res {
+                        use notify::EventKind;
+                        match event.kind {
+                            EventKind::Create(_)
+                            | EventKind::Modify(_)
+                            | EventKind::Remove(_) => {
+                                // Skip .frg directory changes
+                                let all_frg = event
+                                    .paths
+                                    .iter()
+                                    .all(|p| p.components().any(|c| c.as_os_str() == ".frg"));
+                                if !all_frg {
+                                    let _ = tx.send(());
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                },
+            )
+            .map_err(|e| anyhow::anyhow!("failed to create file watcher: {}", e))?;
+
+            watcher
+                .watch(&root, RecursiveMode::Recursive)
+                .map_err(|e| anyhow::anyhow!("failed to watch directory: {}", e))?;
+
+            loop {
+                match rx.recv() {
+                    Ok(()) => {
+                        // Debounce: drain any queued events for 500ms
+                        let deadline =
+                            std::time::Instant::now() + Duration::from_millis(500);
+                        while let Ok(()) = rx.recv_timeout(
+                            deadline.saturating_duration_since(std::time::Instant::now()),
+                        ) {
+                            // drain
+                        }
+
+                        eprint!("Change detected, updating... ");
+                        match index::update_index(&root, 10 * 1024 * 1024) {
+                            Ok(()) => {
+                                if let Ok(gen) = index::current_generation(&root) {
+                                    if let Ok(meta) = index::meta::IndexMeta::read(
+                                        &gen.join("meta.json"),
+                                    ) {
+                                        if meta.overlay_file_count > 0
+                                            || meta.tombstone_count > 0
+                                        {
+                                            eprintln!(
+                                                "{} overlay, {} tombstoned.",
+                                                meta.overlay_file_count,
+                                                meta.tombstone_count
+                                            );
+                                        } else {
+                                            eprintln!("no changes.");
+                                        }
+                                    }
+                                }
+                            }
+                            Err(e) => eprintln!("error: {}", e),
+                        }
+                    }
+                    Err(_) => break, // channel closed
+                }
+            }
+            Ok(())
         }
         Commands::Upgrade => self_upgrade(),
         Commands::Init { path, hook } => {
