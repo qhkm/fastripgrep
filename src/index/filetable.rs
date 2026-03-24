@@ -11,13 +11,14 @@ pub struct FileTableEntry {
     pub size: u64,
 }
 
+#[derive(Default)]
 pub struct FileTableBuilder {
     entries: Vec<FileTableEntry>,
 }
 
 impl FileTableBuilder {
     pub fn new() -> Self {
-        Self { entries: Vec::new() }
+        Self::default()
     }
 
     pub fn add(&mut self, path: &str, mtime: u64, size: u64) -> u32 {

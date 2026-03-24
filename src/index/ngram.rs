@@ -79,9 +79,9 @@ fn widest_from(weights: &[u32], left: usize) -> usize {
             max_inside = max_inside.max(weights[right - 1]);
         }
 
-        if right <= left + 1 {
-            best = right;
-        } else if weights[left] > max_inside && weights[right] > max_inside {
+        if right <= left + 1
+            || (weights[left] > max_inside && weights[right] > max_inside)
+        {
             best = right;
         }
     }

@@ -18,7 +18,7 @@ pub fn walk_files(root: &Path, max_filesize: u64) -> Result<Vec<PathBuf>> {
 
     for entry in walker {
         let entry = entry?;
-        if !entry.file_type().map_or(false, |ft| ft.is_file()) {
+        if !entry.file_type().is_some_and(|ft| ft.is_file()) {
             continue;
         }
         let path = entry.path();

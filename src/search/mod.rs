@@ -12,7 +12,7 @@ use decompose::{build_query_plan, QueryPlan};
 use intersect::{intersect_many, union_many};
 use verify::{Match, verify_file};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SearchOptions {
     pub case_insensitive: bool,
     pub files_only: bool,
@@ -25,24 +25,6 @@ pub struct SearchOptions {
     pub glob_pattern: Option<String>,
     pub file_type: Option<String>,
     pub json: bool,
-}
-
-impl Default for SearchOptions {
-    fn default() -> Self {
-        Self {
-            case_insensitive: false,
-            files_only: false,
-            count: false,
-            max_count: None,
-            quiet: false,
-            literal: false,
-            context: 0,
-            no_index: false,
-            glob_pattern: None,
-            file_type: None,
-            json: false,
-        }
-    }
 }
 
 pub fn search(root: &Path, pattern: &str, opts: &SearchOptions) -> Result<Vec<Match>> {
@@ -71,7 +53,7 @@ pub fn search(root: &Path, pattern: &str, opts: &SearchOptions) -> Result<Vec<Ma
     }
 
     let lookup = MmapLookupTable::open(&gen_dir.join("lookup.bin"))?;
-    let postings_data = std::fs::read(&gen_dir.join("postings.bin"))?;
+    let postings_data = std::fs::read(gen_dir.join("postings.bin"))?;
     let file_table = FileTableReader::open(&gen_dir.join("files.bin"))?;
 
     let plan = build_query_plan(&effective);
