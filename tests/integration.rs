@@ -109,6 +109,32 @@ fn test_alternation_search() {
 }
 
 #[test]
+fn test_binary_excluded_on_scanall_fallback() {
+    // ScanAll patterns (wildcard, single char) should NOT return binary file matches
+    let dir = setup_project();
+    rsgrep::index::build_index(dir.path(), 10 * 1024 * 1024).unwrap();
+
+    // ".*" triggers ScanAll — uses all_file_ids()
+    let opts = rsgrep::search::SearchOptions::default();
+    let results = rsgrep::search::search(dir.path(), ".*", &opts).unwrap();
+    for m in &results {
+        assert!(
+            !m.file_path.contains("image.png"),
+            "binary file should not appear in ScanAll results"
+        );
+    }
+
+    // Single char "P" also triggers ScanAll (no 2-byte literal)
+    let results = rsgrep::search::search(dir.path(), "P", &opts).unwrap();
+    for m in &results {
+        assert!(
+            !m.file_path.contains("image.png"),
+            "binary file should not appear in single-char ScanAll results"
+        );
+    }
+}
+
+#[test]
 fn test_binary_excluded_in_no_index_mode() {
     let dir = setup_project();
     // No index needed — brute-force mode

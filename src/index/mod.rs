@@ -30,48 +30,52 @@ pub fn build_index(root: &Path, max_filesize: u64) -> Result<()> {
 
     let files = walk_files(root, max_filesize)?;
 
-    // Build file table
-    let mut file_table = FileTableBuilder::new();
-    let mut file_entries: Vec<(u32, std::path::PathBuf)> = Vec::new();
-    for path in &files {
-        let metadata = fs::metadata(path)?;
-        let mtime = metadata.modified()
-            .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        let relative = path.strip_prefix(root).unwrap_or(path);
-        let id = file_table.add(relative.as_os_str(), mtime, metadata.len());
-        file_entries.push((id, path.clone()));
+    // Read files in parallel, filter out binary, extract n-grams in one pass.
+    // This avoids adding binary files to the file table entirely.
+    struct FileData {
+        relative: std::path::PathBuf,
+        mtime: u64,
+        size: u64,
+        ngrams: Vec<Vec<u8>>,
     }
 
-    let file_count = file_entries.len() as u32;
-
-    // Extract n-grams in parallel
-    let per_file_ngrams: Vec<(u32, Vec<Vec<u8>>)> = file_entries
+    let file_data: Vec<FileData> = files
         .par_iter()
-        .filter_map(|(id, path)| {
+        .filter_map(|path| {
             let content = fs::read(path).ok()?;
-            // Skip binary files (null byte in first 8KB)
+            // Skip binary files — they never enter the file table
             if crate::ignore::is_binary(&content) {
                 return None;
             }
-            // Always use build_all to guarantee recall. build_all is
-            // O(n * MAX_NGRAM_LEN) per file thanks to the 64-byte cap
-            // on inner loop length, so it is fast even for large files.
+            let metadata = fs::metadata(path).ok()?;
+            let mtime = metadata.modified()
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let relative = path.strip_prefix(root).unwrap_or(path).to_path_buf();
+            // O(n * MAX_NGRAM_LEN) per file
             let spans = build_all(&content);
             let ngrams: Vec<Vec<u8>> = spans.iter()
                 .map(|&(s, e)| content[s..e].to_vec())
                 .collect();
-            Some((*id, ngrams))
+            Some(FileData { relative, mtime, size: metadata.len(), ngrams })
         })
         .collect();
+
+    // Build file table and collect n-grams (sequential — assigns IDs)
+    let mut file_table = FileTableBuilder::new();
+    let mut per_file_ngrams: Vec<(u32, &Vec<Vec<u8>>)> = Vec::new();
+    for fd in &file_data {
+        let id = file_table.add(fd.relative.as_os_str(), fd.mtime, fd.size);
+        per_file_ngrams.push((id, &fd.ngrams));
+    }
 
     // Build inverted index
     let mut inverted: HashMap<u64, Vec<u32>> = HashMap::new();
     for (file_id, ngrams) in &per_file_ngrams {
         let mut seen = std::collections::HashSet::new();
-        for ngram_bytes in ngrams {
+        for ngram_bytes in *ngrams {
             let hash = hash_ngram(ngram_bytes);
             if seen.insert(hash) {
                 inverted.entry(hash).or_default().push(*file_id);
@@ -111,7 +115,7 @@ pub fn build_index(root: &Path, max_filesize: u64) -> Result<()> {
     let meta = IndexMeta {
         version: 1,
         commit_hash,
-        file_count,
+        file_count: file_table.len() as u32,
         ngram_count,
         timestamp: IndexMeta::timestamp_now(),
     };
