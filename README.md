@@ -241,11 +241,16 @@ cargo clippy        # Zero warnings
 
 ## Roadmap
 
-- [ ] Incremental index updates (overlay/tombstone architecture)
-- [ ] O(n) n-gram extraction (monotone-stack optimization)
-- [ ] Corpus-derived weight table (inverse frequency from real code)
-- [ ] `--follow` flag for symlink control
-- [ ] Parallel directory walking (ignore crate parallel walker)
+**High impact:**
+- [ ] Incremental index updates — `frg update` currently does a full rebuild (~23s). The storage layout already supports generations; next step is overlay + tombstones so only changed/new/deleted files are re-indexed
+- [ ] Parallel directory walking — file walk is single-threaded and materializes a full `Vec<PathBuf>` before indexing starts. On large trees this initial crawl is the bottleneck. The `ignore` crate has a parallel walker ready to use
+
+**Medium impact:**
+- [ ] Corpus-derived weight table — current weights are a deterministic hash placeholder. Real inverse-frequency weights from open-source code would improve n-gram selectivity (fewer false positive candidates)
+- [ ] `--follow` flag — symlink following is hardcoded to `false` (matching ripgrep default). Should be user-controllable
+
+**Low priority:**
+- [ ] Monotone-stack n-gram extraction — `build_all` is already O(n) per file due to the 64-byte cap. A true monotone-stack algorithm would remove the cap while staying O(n), but the current bounded approach works well in practice
 
 ## License
 
