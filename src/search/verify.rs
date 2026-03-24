@@ -12,6 +12,13 @@ pub struct Match {
     pub context_after: Vec<(usize, String)>,
 }
 
+/// Build a multi-line version of a regex for whole-file early bail.
+/// This ensures ^ and $ match at line boundaries, not just start/end of content.
+fn multiline_regex(re: &Regex) -> Option<Regex> {
+    let pattern = format!("(?m){}", re.as_str());
+    Regex::new(&pattern).ok()
+}
+
 pub fn verify_file(path: &Path, re: &Regex, max_count: Option<usize>, context: usize) -> Vec<Match> {
     let content = match std::fs::read(path) {
         Ok(c) => c,
@@ -20,9 +27,10 @@ pub fn verify_file(path: &Path, re: &Regex, max_count: Option<usize>, context: u
 
     let file_path = path.to_string_lossy().into_owned();
 
-    // First pass: find matching line indices and offsets using memchr-style scanning
-    // to avoid splitting into lines when there are no matches
-    if !re.is_match(&content) {
+    // Early bail: check whole file for any match before splitting into lines.
+    // Use (?m) multi-line mode so ^ and $ match at line boundaries.
+    let bail_re = multiline_regex(re).unwrap_or_else(|| re.clone());
+    if !bail_re.is_match(&content) {
         return Vec::new();
     }
 
