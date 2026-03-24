@@ -30,12 +30,13 @@ Tested on openclaw (9,000 files), case-sensitive, warm cache, output to `/dev/nu
 ## Install
 
 ```bash
+# One-liner
+curl -fsSL https://raw.githubusercontent.com/qhkm/fastripgrep/main/install.sh | sh
+
+# Or via cargo
 cargo install fastripgrep
-```
 
-Or build from source:
-
-```bash
+# Or build from source
 git clone https://github.com/qhkm/fastripgrep
 cd fastripgrep
 cargo build --release
