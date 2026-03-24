@@ -48,6 +48,11 @@ cargo build --release
 # Binary at target/release/frg
 ```
 
+Homebrew status: formula files exist in [`Formula/`](./Formula) and
+[`HomebrewFormula/`](./HomebrewFormula), but there is no published tap or
+release automation generating Homebrew checksums yet. Today, use the install
+script, `cargo install`, or build from source.
+
 ## Usage
 
 ```bash
@@ -311,7 +316,7 @@ cargo clippy        # Zero warnings
 
 **Adoption:**
 - [x] ~~`frg watch`~~ — auto-updates index on file changes with debouncing
-- [ ] Homebrew tap — formula exists in `Formula/`, needs tap repo + release automation with checksums
+- [ ] Homebrew tap — formula draft exists in `Formula/` and `HomebrewFormula/`, but `brew install frg` is not published yet; needs a tap repo and release automation with checksums
 
 **Editor integrations:**
 - [ ] VS Code extension — use frg as search backend
