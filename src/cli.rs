@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::{CommandFactory, Parser, Subcommand};
+use std::io::Write;
 use std::path::PathBuf;
 use std::process;
 
@@ -107,6 +108,8 @@ enum Commands {
     },
     /// Upgrade frg to the latest release from GitHub
     Upgrade,
+    /// Generate man page
+    Man,
     /// Generate shell completions
     Completions {
         /// Shell to generate completions for
@@ -280,6 +283,14 @@ pub fn run() -> Result<()> {
             index::index_status(&root)
         }
         Commands::Upgrade => self_upgrade(),
+        Commands::Man => {
+            let cmd = Cli::command();
+            let man = clap_mangen::Man::new(cmd);
+            let mut buf = Vec::new();
+            man.render(&mut buf)?;
+            std::io::stdout().write_all(&buf)?;
+            Ok(())
+        }
         Commands::Completions { shell } => {
             let mut cmd = Cli::command();
             clap_complete::generate(shell, &mut cmd, "frg", &mut std::io::stdout());
