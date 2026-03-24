@@ -50,8 +50,9 @@ pub fn build_all(content: &[u8]) -> Vec<NgramSpan> {
 
     for left in 0..weights.len() {
         let mut max_inside: u32 = 0;
+        let limit = weights.len().min(left + MAX_NGRAM_LEN - 1);
 
-        for right in left..weights.len() {
+        for right in left..limit {
             if right >= left + 2 {
                 max_inside = max_inside.max(weights[right - 1]);
             }
@@ -68,13 +69,18 @@ pub fn build_all(content: &[u8]) -> Vec<NgramSpan> {
     out
 }
 
+/// Maximum n-gram length in bytes to consider. Limits O(n) scan in widest_from
+/// to a constant, making build_covering O(n) overall.
+const MAX_NGRAM_LEN: usize = 64;
+
 /// Find the widest sparse n-gram starting at `left` in pair-space.
-/// Returns the largest valid right endpoint.
+/// Returns the largest valid right endpoint. Capped at MAX_NGRAM_LEN bytes.
 fn widest_from(weights: &[u32], left: usize) -> usize {
     let mut max_inside: u32 = 0;
     let mut best = left;
+    let limit = weights.len().min(left + MAX_NGRAM_LEN - 1);
 
-    for right in left..weights.len() {
+    for right in left..limit {
         if right >= left + 2 {
             max_inside = max_inside.max(weights[right - 1]);
         }

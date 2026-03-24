@@ -12,7 +12,7 @@ use std::io::Write;
 use std::path::Path;
 
 use crate::ignore::walk_files;
-use ngram::{build_all, hash_ngram};
+use ngram::{build_all, build_covering, hash_ngram};
 use postings::encode_posting_list;
 use lookup::{LookupEntry, write_lookup_table};
 use filetable::FileTableBuilder;
@@ -52,7 +52,14 @@ pub fn build_index(root: &Path, max_filesize: u64) -> Result<()> {
         .par_iter()
         .filter_map(|(id, path)| {
             let content = fs::read(path).ok()?;
-            let spans = build_all(&content);
+            // For large files, build_all is O(n^2) which is impractical.
+            // Use build_covering (O(n)) for files > 64KB — still produces valid
+            // sparse n-grams, just fewer of them (the covering set).
+            let spans = if content.len() > 65536 {
+                build_covering(&content)
+            } else {
+                build_all(&content)
+            };
             let ngrams: Vec<Vec<u8>> = spans.iter()
                 .map(|&(s, e)| content[s..e].to_vec())
                 .collect();
