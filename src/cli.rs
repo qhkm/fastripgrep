@@ -99,6 +99,8 @@ enum Commands {
         #[arg(default_value = ".")]
         path: PathBuf,
     },
+    /// Upgrade frg to the latest release from GitHub
+    Upgrade,
 }
 
 pub fn run() -> Result<()> {
@@ -253,11 +255,127 @@ pub fn run() -> Result<()> {
             let root = std::fs::canonicalize(&path)?;
             index::index_status(&root)
         }
+        Commands::Upgrade => self_upgrade(),
     };
 
     if let Err(e) = result {
         eprintln!("frg: {}", e);
         process::exit(2);
     }
+    Ok(())
+}
+
+fn self_upgrade() -> Result<()> {
+    const REPO: &str = "qhkm/fastripgrep";
+    let current_version = env!("CARGO_PKG_VERSION");
+
+    eprintln!("Current version: v{}", current_version);
+    eprintln!("Checking for updates...");
+
+    // Get latest release tag from GitHub API
+    let output = std::process::Command::new("curl")
+        .args(["-fsSL", &format!("https://api.github.com/repos/{}/releases/latest", REPO)])
+        .output()?;
+
+    if !output.status.success() {
+        anyhow::bail!("failed to check for updates (no internet or no releases yet)");
+    }
+
+    let body = String::from_utf8_lossy(&output.stdout);
+
+    // Extract tag_name from JSON (minimal parsing, no serde dependency in hot path)
+    let tag = body
+        .lines()
+        .find(|l| l.contains("\"tag_name\""))
+        .and_then(|l| {
+            let after_key = &l[l.find("\"tag_name\"")? + 10..];
+            let q1 = after_key.find('"')? + 1;
+            let q2 = after_key[q1..].find('"')? + q1;
+            Some(after_key[q1..q2].to_string())
+        })
+        .ok_or_else(|| anyhow::anyhow!("could not parse latest release tag"))?;
+
+    let latest_version = tag.trim_start_matches('v');
+    if latest_version == current_version {
+        eprintln!("Already up to date (v{}).", current_version);
+        return Ok(());
+    }
+
+    eprintln!("Upgrading v{} -> {}...", current_version, tag);
+
+    // Detect platform
+    let os = std::env::consts::OS;
+    let arch = std::env::consts::ARCH;
+
+    let target = match (os, arch) {
+        ("macos", "aarch64") => "aarch64-apple-darwin",
+        ("macos", "x86_64") => "x86_64-apple-darwin",
+        ("linux", "aarch64") => "aarch64-unknown-linux-gnu",
+        ("linux", "x86_64") => "x86_64-unknown-linux-gnu",
+        _ => anyhow::bail!("unsupported platform: {}-{}", os, arch),
+    };
+
+    let url = format!(
+        "https://github.com/{}/releases/download/{}/frg-{}-{}.tar.gz",
+        REPO, tag, tag, target
+    );
+
+    // Download to temp file
+    let tmp_dir = std::env::temp_dir().join("frg-upgrade");
+    std::fs::create_dir_all(&tmp_dir)?;
+    let tarball = tmp_dir.join("frg.tar.gz");
+
+    let status = std::process::Command::new("curl")
+        .args(["-fsSL", &url, "-o"])
+        .arg(&tarball)
+        .status()?;
+
+    if !status.success() {
+        anyhow::bail!("failed to download {}", url);
+    }
+
+    // Extract
+    let status = std::process::Command::new("tar")
+        .args(["xzf"])
+        .arg(&tarball)
+        .arg("-C")
+        .arg(&tmp_dir)
+        .status()?;
+
+    if !status.success() {
+        anyhow::bail!("failed to extract archive");
+    }
+
+    // Replace current binary
+    let new_binary = tmp_dir.join("frg");
+    let current_binary = std::env::current_exe()?;
+
+    // On Unix, we can replace a running binary by renaming
+    let backup = current_binary.with_extension("old");
+    if backup.exists() {
+        std::fs::remove_file(&backup)?;
+    }
+    std::fs::rename(&current_binary, &backup)?;
+
+    match std::fs::copy(&new_binary, &current_binary) {
+        Ok(_) => {
+            // Set executable permission
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&current_binary, std::fs::Permissions::from_mode(0o755))?;
+            }
+            let _ = std::fs::remove_file(&backup);
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            eprintln!("Upgraded to {} successfully.", tag);
+        }
+        Err(e) => {
+            // Rollback
+            let _ = std::fs::rename(&backup, &current_binary);
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            anyhow::bail!("failed to install new binary: {}. Rolled back.", e);
+        }
+    }
+
     Ok(())
 }
