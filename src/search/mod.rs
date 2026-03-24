@@ -141,7 +141,7 @@ pub fn classify_pattern(pattern: &str) -> PatternKind {
     }
 }
 
-/// Streaming search: writes matches directly to a writer instead of collecting.
+/// Streaming search: processes files in parallel, writes output in file order.
 /// Much faster for ScanAll patterns with millions of matches.
 pub fn search_streaming<W: Write>(
     root: &Path,
@@ -150,6 +150,8 @@ pub fn search_streaming<W: Write>(
     writer: &mut W,
     use_color: bool,
 ) -> Result<u64> {
+    use rayon::prelude::*;
+
     let effective = if opts.literal {
         regex::escape(pattern)
     } else {
@@ -164,7 +166,7 @@ pub fn search_streaming<W: Write>(
     let kind = classify_pattern(&effective);
 
     // Get file list
-    let file_paths = if opts.no_index {
+    let file_paths: Vec<std::path::PathBuf> = if opts.no_index {
         crate::ignore::walk_files(root, 10 * 1024 * 1024)?
     } else {
         let gen_dir = current_generation(root)?;
@@ -189,83 +191,89 @@ pub fn search_streaming<W: Write>(
             .collect()
     };
 
-    let mut match_count: u64 = 0;
+    // Filter paths first
+    let filtered: Vec<_> = file_paths.iter()
+        .filter(|p| matches_filters(p, opts))
+        .collect();
 
-    for path in &file_paths {
-        if !matches_filters(path, opts) {
-            continue;
-        }
+    let suppress_output = opts.quiet || opts.files_only || opts.count;
 
-        let content = match std::fs::read(path) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-        if crate::ignore::is_binary(&content) {
-            continue;
-        }
-
-        let file_str = path.to_string_lossy();
-
-        match kind {
-            PatternKind::MatchAll => {
-                // Every line matches — skip regex entirely
-                let lines: Vec<&[u8]> = content.split(|&b| b == b'\n').collect();
-                let line_count = if lines.last().map_or(false, |l| l.is_empty()) {
-                    lines.len() - 1 // skip trailing empty line from final newline
-                } else {
-                    lines.len()
-                };
-                for (idx, line) in lines[..line_count].iter().enumerate() {
-                    if let Some(max) = opts.max_count {
-                        if match_count >= max as u64 { break; }
-                    }
-                    match_count += 1;
-                    if !opts.quiet && !opts.files_only && !opts.count {
-                        let line_str = String::from_utf8_lossy(line);
-                        if use_color {
-                            let _ = writeln!(writer, "\x1b[35m{}\x1b[0m:\x1b[32m{}\x1b[0m:{}",
-                                file_str, idx + 1, line_str);
-                        } else {
-                            let _ = writeln!(writer, "{}:{}:{}", file_str, idx + 1, line_str);
-                        }
-                    }
-                }
+    // Process files in parallel — each produces (match_count, output_buffer)
+    let results: Vec<(u64, Vec<u8>)> = filtered
+        .par_iter()
+        .filter_map(|path| {
+            let content = std::fs::read(path).ok()?;
+            if crate::ignore::is_binary(&content) {
+                return None;
             }
-            PatternKind::SingleByte(byte) => {
-                // Use memchr for SIMD-accelerated single-byte search
-                for (idx, line) in content.split(|&b| b == b'\n').enumerate() {
-                    if let Some(max) = opts.max_count {
-                        if match_count >= max as u64 { break; }
-                    }
-                    if memchr::memchr(byte, line).is_some() {
-                        match_count += 1;
-                        if !opts.quiet && !opts.files_only && !opts.count {
-                            let line_str = String::from_utf8_lossy(line);
+
+            let file_str = path.to_string_lossy();
+            let mut buf = Vec::new();
+            let mut count: u64 = 0;
+
+            match kind {
+                PatternKind::MatchAll => {
+                    let lines: Vec<&[u8]> = content.split(|&b| b == b'\n').collect();
+                    let n = if lines.last().map_or(false, |l| l.is_empty()) {
+                        lines.len() - 1
+                    } else {
+                        lines.len()
+                    };
+                    for (idx, line) in lines[..n].iter().enumerate() {
+                        if let Some(max) = opts.max_count {
+                            if count >= max as u64 { break; }
+                        }
+                        count += 1;
+                        if !suppress_output {
                             if use_color {
-                                let _ = writeln!(writer, "\x1b[35m{}\x1b[0m:\x1b[32m{}\x1b[0m:{}",
-                                    file_str, idx + 1, line_str);
+                                let _ = write!(buf, "\x1b[35m{}\x1b[0m:\x1b[32m{}\x1b[0m:{}\n",
+                                    file_str, idx + 1, String::from_utf8_lossy(line));
                             } else {
-                                let _ = writeln!(writer, "{}:{}:{}", file_str, idx + 1, line_str);
+                                // Write raw bytes directly — avoid from_utf8_lossy for ASCII
+                                let _ = write!(buf, "{}:{}:", file_str, idx + 1);
+                                buf.extend_from_slice(line);
+                                buf.push(b'\n');
                             }
                         }
                     }
                 }
+                PatternKind::SingleByte(byte) => {
+                    for (idx, line) in content.split(|&b| b == b'\n').enumerate() {
+                        if let Some(max) = opts.max_count {
+                            if count >= max as u64 { break; }
+                        }
+                        if memchr::memchr(byte, line).is_some() {
+                            count += 1;
+                            if !suppress_output {
+                                if use_color {
+                                    let _ = write!(buf, "\x1b[35m{}\x1b[0m:\x1b[32m{}\x1b[0m:{}\n",
+                                        file_str, idx + 1, String::from_utf8_lossy(line));
+                                } else {
+                                    let _ = write!(buf, "{}:{}:", file_str, idx + 1);
+                                    buf.extend_from_slice(line);
+                                    buf.push(b'\n');
+                                }
+                            }
+                        }
+                    }
+                }
+                PatternKind::Normal => unreachable!(),
             }
-            PatternKind::Normal => {
-                // unreachable in this function — handled by caller
-                unreachable!()
-            }
-        }
 
-        if opts.files_only && match_count > 0 {
-            // Already have a match from this file
-            if !opts.quiet {
-                let _ = writeln!(writer, "{}", file_str);
-            }
+            if count > 0 { Some((count, buf)) } else { None }
+        })
+        .collect();
+
+    // Write output buffers sequentially (maintains file order from parallel processing)
+    let mut total: u64 = 0;
+    for (count, buf) in &results {
+        total += count;
+        if !buf.is_empty() {
+            let _ = writer.write_all(buf);
         }
     }
 
-    Ok(match_count)
+    Ok(total)
 }
 
 fn execute_plan(
