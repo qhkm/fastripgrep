@@ -15,7 +15,7 @@ pub fn walk_files(root: &Path, max_filesize: u64) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     let walker = WalkBuilder::new(root)
         .add_custom_ignore_filename(".rsgrep-ignore")
-        .follow_links(true)
+        .follow_links(false)
         .require_git(false)
         .build();
 
@@ -39,8 +39,8 @@ pub fn walk_files(root: &Path, max_filesize: u64) -> Result<Vec<PathBuf>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::fs;
+    use tempfile::TempDir;
 
     #[test]
     fn test_is_binary() {
@@ -55,7 +55,10 @@ mod tests {
         fs::write(dir.path().join("skip.log"), "log").unwrap();
         fs::write(dir.path().join(".gitignore"), "*.log\n").unwrap();
         let files = walk_files(dir.path(), 10 * 1024 * 1024).unwrap();
-        let names: Vec<_> = files.iter().map(|p| p.file_name().unwrap().to_str().unwrap()).collect();
+        let names: Vec<_> = files
+            .iter()
+            .map(|p| p.file_name().unwrap().to_str().unwrap())
+            .collect();
         assert!(names.contains(&"keep.rs"));
         assert!(!names.contains(&"skip.log"));
     }
@@ -68,7 +71,10 @@ mod tests {
         fs::write(dir.path().join("code.rs"), "fn main() {}").unwrap();
         fs::write(dir.path().join("bin.dat"), b"\x00\x01\x02\x03").unwrap();
         let files = walk_files(dir.path(), 10 * 1024 * 1024).unwrap();
-        let names: Vec<_> = files.iter().map(|p| p.file_name().unwrap().to_str().unwrap()).collect();
+        let names: Vec<_> = files
+            .iter()
+            .map(|p| p.file_name().unwrap().to_str().unwrap())
+            .collect();
         assert!(names.contains(&"code.rs"));
         assert!(names.contains(&"bin.dat")); // walker includes it; indexer filters it
     }
