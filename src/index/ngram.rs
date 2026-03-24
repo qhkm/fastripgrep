@@ -209,7 +209,11 @@ pub fn build_all(content: &[u8]) -> Vec<NgramSpan> {
 
 /// Maximum n-gram length in bytes to consider. Limits O(n) scan in widest_from
 /// to a constant, making build_covering O(n) overall.
-const MAX_NGRAM_LEN: usize = 64;
+///
+/// Set to 128 to catch valid sparse n-grams up to 128 bytes. With corpus-derived
+/// weights, n-grams bounded by rare byte pairs (weight 100+) over common text
+/// (weight 4-50) can span 60-100 bytes. The previous cap of 64 missed some of these.
+const MAX_NGRAM_LEN: usize = 128;
 
 /// Find the widest sparse n-gram starting at `left` in pair-space.
 /// Returns the largest valid right endpoint. Capped at MAX_NGRAM_LEN bytes.
@@ -277,6 +281,33 @@ pub fn build_covering(content: &[u8]) -> Vec<NgramSpan> {
         next_uncovered = best_right_end - 1;
     }
 
+    out
+}
+
+/// Reference implementation of build_all with no length cap. O(n^2).
+/// Used only in tests to verify the capped version doesn't miss n-grams
+/// on short inputs.
+#[cfg(test)]
+pub fn build_all_reference(content: &[u8]) -> Vec<NgramSpan> {
+    if content.len() < 2 {
+        return Vec::new();
+    }
+    let weights = pair_weights(content);
+    let mut out = Vec::new();
+    for left in 0..weights.len() {
+        let mut max_inside: u32 = 0;
+        for right in left..weights.len() {
+            if right >= left + 2 {
+                max_inside = max_inside.max(weights[right - 1]);
+            }
+            if right <= left + 1 {
+                // 2 or 3 byte n-gram: interior empty, vacuously valid
+                out.push((left, right + 2));
+            } else if weights[left] > max_inside && weights[right] > max_inside {
+                out.push((left, right + 2));
+            }
+        }
+    }
     out
 }
 
@@ -514,5 +545,89 @@ mod tests {
             rare_avg_len,
             common_avg_len
         );
+    }
+
+    #[test]
+    fn test_build_all_matches_reference_short() {
+        // On short inputs, capped build_all must produce same results as uncapped reference
+        let inputs: Vec<&[u8]> = vec![
+            b"hello world",
+            b"fn main() { println!(\"test\"); }",
+            b"#![allow(unused)] use std::io;",
+            b"camelCaseIdentifier",
+            b"ab",
+            b"abc",
+            b"a\xff\xfe b",
+        ];
+        for input in &inputs {
+            let capped = build_all(input);
+            let reference = build_all_reference(input);
+            assert_eq!(
+                capped, reference,
+                "mismatch on input of len {}",
+                input.len()
+            );
+        }
+    }
+
+    #[test]
+    fn test_build_all_long_ngram() {
+        // Create input with a valid n-gram longer than 64 bytes:
+        // High-weight edge characters surrounding low-weight interior.
+        // Use non-ASCII bytes (weight ~230) as edges and spaces (weight ~5) as interior.
+        let mut content = Vec::new();
+        content.push(0xFF); // high-weight left edge pair with next byte
+        // Interior: long run of spaces (space-space weight = 3, very low)
+        for _ in 0..100 {
+            content.push(b' ');
+        }
+        content.push(0xFE); // high-weight right edge pair with preceding byte
+
+        let ngrams = build_all(&content);
+        let reference = build_all_reference(&content);
+
+        // Should find spans longer than 64 bytes
+        let has_long = ngrams.iter().any(|(s, e)| e - s > 64);
+        assert!(
+            has_long,
+            "should find n-grams longer than 64 bytes with new cap of 128"
+        );
+
+        // Should match reference (no missed n-grams)
+        assert_eq!(
+            ngrams, reference,
+            "capped build_all should match uncapped reference on this input"
+        );
+    }
+
+    #[test]
+    fn test_max_ngram_len_is_128() {
+        // Verify the constant was updated
+        assert_eq!(MAX_NGRAM_LEN, 128);
+    }
+
+    mod proptest_reference {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #![proptest_config(proptest::test_runner::Config {
+                failure_persistence: None,
+                cases: 500,
+                .. proptest::test_runner::Config::default()
+            })]
+
+            /// On inputs up to 200 bytes, the capped build_all must produce
+            /// the same results as the uncapped reference implementation.
+            #[test]
+            fn build_all_matches_reference(content in prop::collection::vec(any::<u8>(), 2..200)) {
+                let capped = build_all(&content);
+                let reference = build_all_reference(&content);
+                prop_assert_eq!(
+                    capped, reference,
+                    "mismatch on input of len {}", content.len()
+                );
+            }
+        }
     }
 }
