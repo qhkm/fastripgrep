@@ -108,6 +108,14 @@ enum Commands {
     },
     /// Upgrade frg to the latest release from GitHub
     Upgrade,
+    /// Initialize frg for this project
+    Init {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Install git hook to auto-index on commit
+        #[arg(long)]
+        hook: bool,
+    },
     /// Generate man page
     Man,
     /// Generate shell completions
@@ -283,6 +291,74 @@ pub fn run() -> Result<()> {
             index::index_status(&root)
         }
         Commands::Upgrade => self_upgrade(),
+        Commands::Init { path, hook } => {
+            let root = std::fs::canonicalize(&path)?;
+
+            // Create .frgignore if it doesn't exist
+            let ignore_path = root.join(".frgignore");
+            if !ignore_path.exists() {
+                let mut ignore_content = String::from("# frg ignore patterns\n");
+
+                // Auto-detect project type and add relevant ignores
+                if root.join("package.json").exists() {
+                    ignore_content.push_str("node_modules/\ndist/\n.next/\ncoverage/\n");
+                    eprintln!("Detected Node.js project");
+                }
+                if root.join("Cargo.toml").exists() {
+                    ignore_content.push_str("target/\n");
+                    eprintln!("Detected Rust project");
+                }
+                if root.join("go.mod").exists() {
+                    ignore_content.push_str("vendor/\n");
+                    eprintln!("Detected Go project");
+                }
+                if root.join("requirements.txt").exists() || root.join("pyproject.toml").exists() {
+                    ignore_content.push_str("__pycache__/\n*.pyc\n.venv/\nvenv/\n");
+                    eprintln!("Detected Python project");
+                }
+                if root.join("Gemfile").exists() {
+                    ignore_content.push_str("vendor/bundle/\n");
+                    eprintln!("Detected Ruby project");
+                }
+
+                std::fs::write(&ignore_path, &ignore_content)?;
+                eprintln!("Created {}", ignore_path.display());
+            } else {
+                eprintln!(".frgignore already exists, skipping");
+            }
+
+            // Install git hook if requested
+            if hook {
+                let hooks_dir = root.join(".git/hooks");
+                if hooks_dir.exists() {
+                    let hook_path = hooks_dir.join("post-commit");
+                    let hook_content = "#!/bin/sh\nfrg update . &\n";
+                    std::fs::write(&hook_path, hook_content)?;
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        std::fs::set_permissions(
+                            &hook_path,
+                            std::fs::Permissions::from_mode(0o755),
+                        )?;
+                    }
+                    eprintln!("Installed post-commit hook for auto-indexing");
+                } else {
+                    eprintln!("Not a git repository, skipping hook installation");
+                }
+            }
+
+            // Build index
+            eprintln!("Building index...");
+            index::build_index(&root, 10 * 1024 * 1024)?;
+            let gen = index::current_generation(&root)?;
+            let meta = index::meta::IndexMeta::read(&gen.join("meta.json"))?;
+            eprintln!(
+                "Done. {} files, {} n-grams.",
+                meta.file_count, meta.ngram_count
+            );
+            Ok(())
+        }
         Commands::Man => {
             let cmd = Cli::command();
             let man = clap_mangen::Man::new(cmd);
