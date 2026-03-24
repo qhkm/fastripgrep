@@ -41,7 +41,7 @@ pub fn build_index(root: &Path, max_filesize: u64) -> Result<()> {
             .unwrap_or_default()
             .as_secs();
         let relative = path.strip_prefix(root).unwrap_or(path);
-        let id = file_table.add(relative.to_str().unwrap_or(""), mtime, metadata.len());
+        let id = file_table.add(relative.as_os_str(), mtime, metadata.len());
         file_entries.push((id, path.clone()));
     }
 

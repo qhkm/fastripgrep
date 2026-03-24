@@ -1,4 +1,5 @@
 use anyhow::Result;
+use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -21,7 +22,8 @@ impl FileTableBuilder {
         Self::default()
     }
 
-    pub fn add(&mut self, path: &str, mtime: u64, size: u64) -> u32 {
+    /// Add a file path (as OsStr to preserve non-UTF-8 paths on Unix).
+    pub fn add(&mut self, path: &OsStr, mtime: u64, size: u64) -> u32 {
         let id = self.entries.len() as u32;
         self.entries.push(FileTableEntry {
             path: PathBuf::from(path),
@@ -31,13 +33,27 @@ impl FileTableBuilder {
         id
     }
 
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
     pub fn write(&self, file: &mut File) -> Result<()> {
         file.write_all(MAGIC)?;
         file.write_all(&(self.entries.len() as u32).to_le_bytes())?;
         for entry in &self.entries {
-            let path_bytes = entry.path.to_string_lossy().into_owned().into_bytes();
+            // On Unix, OsStr is raw bytes. Use os_str_bytes for lossless roundtrip.
+            #[cfg(unix)]
+            let path_bytes = {
+                use std::os::unix::ffi::OsStrExt;
+                entry.path.as_os_str().as_bytes()
+            };
+            #[cfg(not(unix))]
+            let path_bytes = entry.path.to_string_lossy().as_bytes().to_vec();
+            #[cfg(not(unix))]
+            let path_bytes = path_bytes.as_slice();
+
             file.write_all(&(path_bytes.len() as u32).to_le_bytes())?;
-            file.write_all(&path_bytes)?;
+            file.write_all(path_bytes)?;
             file.write_all(&entry.mtime.to_le_bytes())?;
             file.write_all(&entry.size.to_le_bytes())?;
         }
@@ -74,6 +90,12 @@ impl FileTableReader {
             if offset + path_len + 16 > data.len() {
                 anyhow::bail!("file table truncated");
             }
+            #[cfg(unix)]
+            let path = {
+                use std::os::unix::ffi::OsStrExt;
+                PathBuf::from(OsStr::from_bytes(&data[offset..offset + path_len]))
+            };
+            #[cfg(not(unix))]
             let path = PathBuf::from(String::from_utf8_lossy(&data[offset..offset + path_len]).into_owned());
             offset += path_len;
 
@@ -107,8 +129,8 @@ mod tests {
     #[test]
     fn test_filetable_roundtrip() {
         let mut table = FileTableBuilder::new();
-        let id1 = table.add("src/main.rs", 1000, 500);
-        let id2 = table.add("src/lib.rs", 2000, 300);
+        let id1 = table.add(OsStr::new("src/main.rs"), 1000, 500);
+        let id2 = table.add(OsStr::new("src/lib.rs"), 2000, 300);
         let mut file = NamedTempFile::new().unwrap();
         table.write(file.as_file_mut()).unwrap();
 
@@ -123,11 +145,29 @@ mod tests {
     #[test]
     fn test_filetable_all_ids() {
         let mut table = FileTableBuilder::new();
-        table.add("a.rs", 0, 0);
-        table.add("b.rs", 0, 0);
+        table.add(OsStr::new("a.rs"), 0, 0);
+        table.add(OsStr::new("b.rs"), 0, 0);
         let mut file = NamedTempFile::new().unwrap();
         table.write(file.as_file_mut()).unwrap();
         let reader = FileTableReader::open(file.path()).unwrap();
         assert_eq!(reader.all_file_ids(), vec![0, 1]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_filetable_non_utf8_path() {
+        use std::os::unix::ffi::OsStrExt;
+        // Create a path with non-UTF-8 bytes
+        let non_utf8 = OsStr::from_bytes(b"src/\xff\xfe.rs");
+        let mut table = FileTableBuilder::new();
+        let id = table.add(non_utf8, 999, 42);
+        let mut file = NamedTempFile::new().unwrap();
+        table.write(file.as_file_mut()).unwrap();
+
+        let reader = FileTableReader::open(file.path()).unwrap();
+        let entry = reader.get(id).unwrap();
+        assert_eq!(entry.path.as_os_str(), non_utf8);
+        assert_eq!(entry.mtime, 999);
+        assert_eq!(entry.size, 42);
     }
 }

@@ -107,3 +107,54 @@ fn test_alternation_search() {
         results.len()
     );
 }
+
+#[test]
+fn test_binary_excluded_in_no_index_mode() {
+    let dir = setup_project();
+    // No index needed — brute-force mode
+    let opts = rsgrep::search::SearchOptions {
+        no_index: true,
+        ..Default::default()
+    };
+    let results = rsgrep::search::search(dir.path(), "PNG", &opts).unwrap();
+    for m in &results {
+        assert!(
+            !m.file_path.contains("image.png"),
+            "binary file should be excluded in --no-index mode too"
+        );
+    }
+}
+
+#[test]
+fn test_indexed_and_bruteforce_same_results() {
+    let dir = setup_project();
+    rsgrep::index::build_index(dir.path(), 10 * 1024 * 1024).unwrap();
+
+    let indexed = rsgrep::search::search(
+        dir.path(),
+        "config",
+        &rsgrep::search::SearchOptions::default(),
+    )
+    .unwrap();
+    let brute = rsgrep::search::search(
+        dir.path(),
+        "config",
+        &rsgrep::search::SearchOptions {
+            no_index: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    // Same file set
+    let idx_files: HashSet<_> = indexed.iter().map(|m| &m.file_path).collect();
+    let bf_files: HashSet<_> = brute.iter().map(|m| &m.file_path).collect();
+    assert_eq!(idx_files, bf_files, "indexed and brute-force should find same files");
+
+    // Same match count
+    assert_eq!(
+        indexed.len(),
+        brute.len(),
+        "indexed and brute-force should find same number of matches"
+    );
+}
