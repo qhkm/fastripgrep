@@ -37,6 +37,10 @@ impl FileTableBuilder {
         self.entries.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
     pub fn write(&self, file: &mut File) -> Result<()> {
         file.write_all(MAGIC)?;
         file.write_all(&(self.entries.len() as u32).to_le_bytes())?;
@@ -84,7 +88,8 @@ impl FileTableReader {
             if offset + 4 > data.len() {
                 anyhow::bail!("file table truncated");
             }
-            let path_len = u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap()) as usize;
+            let path_len =
+                u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap()) as usize;
             offset += 4;
 
             if offset + path_len + 16 > data.len() {
@@ -96,7 +101,9 @@ impl FileTableReader {
                 PathBuf::from(OsStr::from_bytes(&data[offset..offset + path_len]))
             };
             #[cfg(not(unix))]
-            let path = PathBuf::from(String::from_utf8_lossy(&data[offset..offset + path_len]).into_owned());
+            let path = PathBuf::from(
+                String::from_utf8_lossy(&data[offset..offset + path_len]).into_owned(),
+            );
             offset += path_len;
 
             let mtime = u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap());
@@ -123,8 +130,8 @@ impl FileTableReader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::NamedTempFile;
     use std::path::PathBuf;
+    use tempfile::NamedTempFile;
 
     #[test]
     fn test_filetable_roundtrip() {
