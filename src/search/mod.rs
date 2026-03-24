@@ -1,5 +1,6 @@
 pub mod decompose;
 pub mod intersect;
+pub mod replace;
 pub mod verify;
 
 use crate::index::filetable::FileTableReader;

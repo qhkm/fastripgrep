@@ -132,6 +132,30 @@ enum Commands {
         #[arg(value_enum)]
         shell: clap_complete::Shell,
     },
+    /// Search and replace in files
+    Replace {
+        /// Regex pattern to search for
+        pattern: String,
+        /// Replacement string (supports $1, $2 for capture groups)
+        replacement: String,
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Actually write changes (default is dry-run preview)
+        #[arg(long)]
+        write: bool,
+        /// Case-insensitive
+        #[arg(short = 'i')]
+        case_insensitive: bool,
+        /// Treat pattern as fixed string
+        #[arg(short = 'F', long)]
+        literal: bool,
+        /// Filter files by glob
+        #[arg(long)]
+        glob: Option<String>,
+        /// Filter by file type
+        #[arg(long = "type")]
+        file_type: Option<String>,
+    },
 }
 
 pub fn run() -> Result<()> {
@@ -484,6 +508,119 @@ pub fn run() -> Result<()> {
         Commands::Completions { shell } => {
             let mut cmd = Cli::command();
             clap_complete::generate(shell, &mut cmd, "frg", &mut std::io::stdout());
+            Ok(())
+        }
+        Commands::Replace {
+            pattern,
+            replacement,
+            path,
+            write,
+            case_insensitive,
+            literal,
+            glob,
+            file_type,
+        } => {
+            let root = std::fs::canonicalize(&path)?;
+
+            let effective_pattern = if literal {
+                regex::escape(&pattern)
+            } else {
+                pattern.clone()
+            };
+            let effective_pattern = if case_insensitive {
+                format!("(?i){}", effective_pattern)
+            } else {
+                effective_pattern
+            };
+            let replacement_bytes = if literal {
+                replacement.as_bytes().to_vec()
+            } else {
+                replacement.into_bytes()
+            };
+
+            let re = regex::bytes::Regex::new(&effective_pattern)?;
+
+            // Find files with matches using existing search
+            let opts = SearchOptions {
+                case_insensitive,
+                literal,
+                glob_pattern: glob,
+                file_type,
+                ..Default::default()
+            };
+            let matches = search::search(&root, &pattern, &opts)?;
+
+            // Get unique file paths from matches
+            let mut file_paths: Vec<String> = matches.iter().map(|m| m.file_path.clone()).collect();
+            file_paths.sort();
+            file_paths.dedup();
+
+            let stdout = std::io::stdout();
+            let mut out = std::io::BufWriter::new(stdout.lock());
+            let use_color = output::color::should_color();
+
+            let mut total_replacements = 0;
+            let mut total_files = 0;
+
+            if write {
+                // Write mode
+                for file_path in &file_paths {
+                    let p = std::path::Path::new(file_path);
+                    match search::replace::write_replacement(p, &re, &replacement_bytes) {
+                        Ok(0) => {}
+                        Ok(n) => {
+                            total_replacements += n;
+                            total_files += 1;
+                            let _ = writeln!(out, "{}: {} replacements", file_path, n);
+                        }
+                        Err(e) => eprintln!("error: {}: {}", file_path, e),
+                    }
+                }
+                eprintln!(
+                    "Wrote {} replacements in {} files.",
+                    total_replacements, total_files
+                );
+            } else {
+                // Preview mode (dry-run)
+                for file_path in &file_paths {
+                    let p = std::path::Path::new(file_path);
+                    if let Some(result) =
+                        search::replace::replace_in_file(p, &re, &replacement_bytes)
+                    {
+                        total_replacements += result.replacements;
+                        total_files += 1;
+                        if use_color {
+                            let _ = writeln!(out, "\x1b[36m{}\x1b[0m:", result.file_path);
+                        } else {
+                            let _ = writeln!(out, "{}:", result.file_path);
+                        }
+                        for ((ln, orig), (_, repl)) in
+                            result.original_lines.iter().zip(result.replaced_lines.iter())
+                        {
+                            if use_color {
+                                let _ = writeln!(
+                                    out,
+                                    "  \x1b[32m{:>4}\x1b[0m | \x1b[31m- {}\x1b[0m",
+                                    ln, orig
+                                );
+                                let _ = writeln!(out, "       | \x1b[32m+ {}\x1b[0m", repl);
+                            } else {
+                                let _ = writeln!(out, "  {:>4} | - {}", ln, orig);
+                                let _ = writeln!(out, "       | + {}", repl);
+                            }
+                        }
+                    }
+                }
+                if total_files > 0 {
+                    eprintln!(
+                        "Preview: {} lines changed in {} files. Use --write to apply.",
+                        total_replacements, total_files
+                    );
+                } else {
+                    eprintln!("No matches found.");
+                    process::exit(1);
+                }
+            }
             Ok(())
         }
     };
